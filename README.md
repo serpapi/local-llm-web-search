@@ -2,7 +2,7 @@
 
 Give a local LLM access to real-time web data. The model decides what to search for, your code runs that search through SerpApi, and the model answers with fresh results in hand. Inference stays on your hardware. The only thing that leaves your machine is the search query the model chose to issue.
 
-This is the companion repository for the SerpApi article _How to Connect Your Local LLM with Web Search Data_. The link goes live on publication.
+This is the companion repository for the SerpApi article [How to Connect Your Local LLM with Web Search Data](https://serpapi.com/blog/how-to-connect-your-local-llm-with-web-search-data/). The link goes live on publication.
 
 ## What it does
 
