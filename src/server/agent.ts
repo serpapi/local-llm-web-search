@@ -404,7 +404,7 @@ export type JsonValue =
  * Run a tool's Zod schema against the model's raw args. Throws
  * `ToolArgError` with a model-friendly suggestion on validation failure.
  */
-function validateToolArgs(toolName: string, rawArgs: unknown): ToolArgs {
+export function validateToolArgs(toolName: string, rawArgs: unknown): ToolArgs {
   if (!isRestrictorTool(toolName)) {
     throw new ToolArgError(
       `Unknown tool: ${toolName}`,
@@ -534,7 +534,7 @@ function normalizeLanguageCode(code: string | undefined): string | undefined {
  * restrictor. Shared by the live executor and the compare endpoint so
  * both hit SerpApi with identical parameters apart from `json_restrictor`.
  */
-function toolParams(
+export function toolParams(
   name: RestrictorTool,
   args: ToolArgs
 ): Record<string, unknown> {
@@ -633,7 +633,7 @@ function executeToolUnrestricted(
  * signal to pivot to `google_search` instead of handing the model a
  * blank object.
  */
-function isEmptyFinanceResponse(response: SerpApiJson): boolean {
+export function isEmptyFinanceResponse(response: SerpApiJson): boolean {
   const summary = response?.summary
   if (summary?.title || summary?.price) return false
   const stats = response?.knowledge_graph?.key_stats?.stats
@@ -890,7 +890,7 @@ function toolCallLabel(tc: ToolCallInfo): string {
  *      especially important on parallel tool calls where multiple SERPs
  *      sit behind a single answer.
  */
-function extractSources(
+export function extractSources(
   finalText: string,
   toolSources: Array<{ url: string; label: string }>
 ): Array<Source> {

@@ -3,21 +3,27 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   contextBackoffSequence,
   contextOverride,
+  extractSources,
+  isEmptyFinanceResponse,
   normalizeCountryCode,
   parseInlineToolCalls,
   recommendedContext,
   redactSecrets,
   sanitizeHistoryForReplay,
+  toolParams,
   trimHistoryToFit,
+  validateToolArgs,
 } from "../agent"
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions"
 
 // Tests cover the pure helpers around the SerpApi tool loop: history
 // sanitisation, secret redaction, inline-XML tool-call parsing, sliding-
-// window history trimming, and country-code normalisation. SerpApi
-// response shaping is handled server-side by `json_restrictor`, so there
-// is no client-side formatter to test.
+// window history trimming, country-code normalisation, tool-arg
+// validation, per-engine request building, the empty-finance fallback
+// signal, and sources extraction. SerpApi response shaping is handled
+// server-side by `json_restrictor`, so there is no client-side formatter
+// to test.
 
 describe("sanitizeHistoryForReplay", () => {
   it("strips tool_call + tool messages and neutralizes the answer", () => {
@@ -292,5 +298,157 @@ describe("contextOverride", () => {
     expect(contextOverride()).toBeNull()
     process.env.LMSTUDIO_CONTEXT_LENGTH = "not-a-number"
     expect(contextOverride()).toBeNull()
+  })
+})
+
+describe("validateToolArgs", () => {
+  it("returns the parsed args for a valid call", () => {
+    const args = validateToolArgs("google_search", {
+      query: "latest nvidia news",
+      num: 5,
+      gl: "us",
+    })
+    expect(args).toEqual({ query: "latest nvidia news", num: 5, gl: "us" })
+  })
+
+  it("rejects a tool the server doesn't know about", () => {
+    expect(() => validateToolArgs("google_shopping", {})).toThrow(
+      /Unknown tool/
+    )
+  })
+
+  it("rejects malformed args and names the offending field", () => {
+    expect(() =>
+      validateToolArgs("google_search", { query: "chips", num: "five" })
+    ).toThrow(/num/)
+  })
+
+  it("rejects a flights date that isn't YYYY-MM-DD", () => {
+    expect(() =>
+      validateToolArgs("google_flights_search", {
+        departure_id: "SCL",
+        arrival_id: "MAD",
+        outbound_date: "March 3rd",
+      })
+    ).toThrow(/outbound_date/)
+  })
+})
+
+describe("toolParams", () => {
+  it("builds a google_search request with the 5-result default", () => {
+    expect(toolParams("google_search", { query: "serpapi" })).toEqual({
+      engine: "google",
+      q: "serpapi",
+      num: 5,
+    })
+  })
+
+  it("keeps a clean country code and drops a regional bloc", () => {
+    expect(
+      toolParams("google_search", { query: "chips", gl: "US" })
+    ).toMatchObject({ gl: "us" })
+    // "eu" is rejected by SerpApi as `gl` — must become a no-op, not a 4xx.
+    expect(
+      toolParams("google_search", { query: "chips", gl: "eu" })
+    ).not.toHaveProperty("gl")
+  })
+
+  it("builds a google_maps request with the fixed search type", () => {
+    expect(
+      toolParams("google_maps_search", { query: "coffee in Austin" })
+    ).toEqual({ engine: "google_maps", q: "coffee in Austin", type: "search" })
+  })
+
+  it("defaults flights to one-way USD and omits absent options", () => {
+    expect(
+      toolParams("google_flights_search", {
+        departure_id: "SCL",
+        arrival_id: "MAD",
+        outbound_date: "2026-08-01",
+      })
+    ).toEqual({
+      engine: "google_flights",
+      departure_id: "SCL",
+      arrival_id: "MAD",
+      outbound_date: "2026-08-01",
+      type: "2",
+      currency: "USD",
+    })
+  })
+
+  it("passes a round trip's return date and travel class through", () => {
+    expect(
+      toolParams("google_flights_search", {
+        departure_id: "SCL",
+        arrival_id: "MAD",
+        outbound_date: "2026-08-01",
+        return_date: "2026-08-15",
+        type: "1",
+        travel_class: "3",
+      })
+    ).toMatchObject({
+      type: "1",
+      return_date: "2026-08-15",
+      travel_class: "3",
+    })
+  })
+})
+
+describe("isEmptyFinanceResponse", () => {
+  it("treats a response with no quote, stats, or news as empty", () => {
+    expect(isEmptyFinanceResponse({})).toBe(true)
+    expect(
+      isEmptyFinanceResponse({
+        summary: {},
+        knowledge_graph: { key_stats: { stats: [] } },
+        news_results: [],
+      })
+    ).toBe(true)
+  })
+
+  it("keeps a response that has a usable quote", () => {
+    expect(isEmptyFinanceResponse({ summary: { title: "Apple Inc" } })).toBe(
+      false
+    )
+    expect(isEmptyFinanceResponse({ summary: { price: "$255.46" } })).toBe(
+      false
+    )
+  })
+
+  it("keeps a response that only has stats or news", () => {
+    expect(
+      isEmptyFinanceResponse({
+        knowledge_graph: { key_stats: { stats: [{ label: "P/E" }] } },
+      })
+    ).toBe(false)
+    expect(
+      isEmptyFinanceResponse({ news_results: [{ title: "Markets rally" }] })
+    ).toBe(false)
+  })
+})
+
+describe("extractSources", () => {
+  it("lists tool SERPs first, then links cited in the answer", () => {
+    const sources = extractSources(
+      "See [Apple](https://apple.com) for details.",
+      [{ label: "Finance · AAPL", url: "https://google.com/finance?q=AAPL" }]
+    )
+    expect(sources).toEqual([
+      { label: "Finance · AAPL", url: "https://google.com/finance?q=AAPL" },
+      { label: "Apple", url: "https://apple.com" },
+    ])
+  })
+
+  it("dedupes by URL across tool sources and answer links", () => {
+    const url = "https://google.com/search?q=chips"
+    const sources = extractSources(`Source: [the SERP](${url})`, [
+      { label: "Search · chips", url },
+      { label: "Search · chips (again)", url },
+    ])
+    expect(sources).toEqual([{ label: "Search · chips", url }])
+  })
+
+  it("returns an empty list when there are no tools and no links", () => {
+    expect(extractSources("No links here.", [])).toEqual([])
   })
 })
