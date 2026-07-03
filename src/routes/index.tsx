@@ -5,6 +5,7 @@ import {
   Braces,
   CheckCircle2,
   FlaskConical,
+  Loader2,
   Moon,
   Send,
   Sparkles,
@@ -19,6 +20,7 @@ import type {
   FullResponseResult,
   ModelInfo,
   Phases,
+  QueryProgress,
   Source,
   ToolCallInfo,
 } from "@/server/agent"
@@ -62,6 +64,7 @@ import {
   CONTEXT_SEGMENTS,
   contextTotal,
   fetchFullResponse,
+  getQueryProgress,
   listModels,
   runQuery,
 } from "@/server/agent"
@@ -329,6 +332,9 @@ function App() {
   const [rawFormattedOpen, setRawFormattedOpen] = useState(false)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  // Live stage of the in-flight query, polled from the server so the chat
+  // can show real progress instead of a silent spinner.
+  const [liveProgress, setLiveProgress] = useState<QueryProgress | null>(null)
   const [availableModels, setAvailableModels] =
     useState<Array<ModelInfo> | null>(null)
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
@@ -395,6 +401,21 @@ function App() {
     setIsLoading(true)
     const start = performance.now()
 
+    // Poll the server's stage marker while the call is in flight (see
+    // `getQueryProgress` in agent.ts). Best-effort: a failed poll just
+    // leaves the previous stage on screen.
+    const progressId = newId()
+    setLiveProgress({ stage: "load", detail: null })
+    const progressPoll = setInterval(() => {
+      getQueryProgress({ data: { id: progressId } })
+        .then((p) => {
+          if (p) setLiveProgress(p)
+        })
+        .catch(() => {
+          // Ignore poll failures — progress display is cosmetic.
+        })
+    }, 500)
+
     // Client-side watchdog. The server has its own timeouts (60s per
     // completion × up to 3 completions + tool exec), so total worst case
     // is ~3 min. If the RPC hangs past that (e.g. Vite HMR interrupts an
@@ -419,6 +440,7 @@ function App() {
             contextLength: selectedModel.recommendedContextLength,
             toolUseTrained: selectedModel.toolUseTrained,
             history: conversationMessages,
+            progressId,
           },
         }),
         watchdog,
@@ -488,6 +510,8 @@ function App() {
       ])
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+      clearInterval(progressPoll)
+      setLiveProgress(null)
       setIsLoading(false)
     }
   }
@@ -535,6 +559,7 @@ function App() {
             input={input}
             setInput={setInput}
             isLoading={isLoading}
+            progress={liveProgress}
             onSubmit={submit}
             canSubmit={canSubmit}
             turnsInMemory={
@@ -808,6 +833,7 @@ function ChatPanel({
   input,
   setInput,
   isLoading,
+  progress,
   onSubmit,
   canSubmit,
   turnsInMemory,
@@ -817,6 +843,7 @@ function ChatPanel({
   input: string
   setInput: (v: string) => void
   isLoading: boolean
+  progress: QueryProgress | null
   onSubmit: () => void
   canSubmit: boolean
   turnsInMemory: number
@@ -849,11 +876,7 @@ function ChatPanel({
           ) : (
             messages.map((m) => <ChatMessageBubble key={m.id} message={m} />)
           )}
-          {isLoading ? (
-            <div className="pl-1 text-muted-foreground">
-              <TextShimmerLoader text="Thinking…" size="sm" />
-            </div>
-          ) : null}
+          {isLoading ? <QueryProgressLadder progress={progress} /> : null}
           <ChatContainerScrollAnchor />
         </ChatContainerContent>
       </ChatContainerRoot>
@@ -913,6 +936,63 @@ function EmptyChatState() {
         </span>{" "}
         below to try these examples.
       </p>
+    </div>
+  )
+}
+
+// The stages a query moves through server-side, in order. The ladder
+// renders like a small activity log: finished stages collapse to a check,
+// the live stage shimmers, and stages that never happen (no tool call)
+// simply never appear.
+const PROGRESS_STAGES: Array<{ key: QueryProgress["stage"]; label: string }> = [
+  { key: "load", label: "Loading the model" },
+  { key: "think", label: "Thinking" },
+  { key: "tools", label: "Calling SerpApi" },
+  { key: "answer", label: "Writing the answer" },
+]
+
+function QueryProgressLadder({ progress }: { progress: QueryProgress | null }) {
+  const activeIdx = Math.max(
+    0,
+    PROGRESS_STAGES.findIndex((s) => s.key === (progress?.stage ?? "load"))
+  )
+  return (
+    <div
+      className="flex flex-col gap-2 pl-1"
+      role="status"
+      aria-label="Query progress"
+    >
+      {PROGRESS_STAGES.map((s, i) => {
+        if (i > activeIdx) return null
+        const active = i === activeIdx
+        const label =
+          s.key === "tools" && progress?.detail
+            ? `${s.label} · ${progress.detail}`
+            : s.label
+        return (
+          <div
+            key={s.key}
+            className="flex animate-in items-center gap-2 text-muted-foreground duration-300 fade-in slide-in-from-bottom-1"
+          >
+            {active ? (
+              <Loader2
+                aria-hidden
+                className="h-3.5 w-3.5 shrink-0 animate-spin"
+              />
+            ) : (
+              <CheckCircle2
+                aria-hidden
+                className="h-3.5 w-3.5 shrink-0 text-serpapi-blue"
+              />
+            )}
+            {active ? (
+              <TextShimmerLoader text={`${label}…`} size="sm" />
+            ) : (
+              <span className="text-xs">{label}</span>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

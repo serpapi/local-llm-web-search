@@ -1581,7 +1581,43 @@ const runQueryInput = z.object({
   contextLength: z.number().int().positive().optional(),
   toolUseTrained: z.boolean().optional(),
   history: z.array(historyMessageSchema).default([]),
+  // Client-generated id for progress polling (see `getQueryProgress`).
+  progressId: z.string().min(1).max(100).optional(),
 })
+
+// ─── Query progress ────────────────────────────────────
+// `runQuery` is a single request/response round trip, so the client can't
+// observe phase transitions on its own. Instead the handler records its
+// current stage in this module-level map (keyed by a client-generated id)
+// and the client polls `getQueryProgress` while the main call is in
+// flight. Entries are deleted when the query settles, so the map holds at
+// most one entry per in-flight query.
+
+export type QueryProgress = {
+  stage: "load" | "think" | "tools" | "answer"
+  // Extra context for the stage — for "tools", the engines being called.
+  detail: string | null
+}
+
+const queryProgress = new Map<string, QueryProgress>()
+
+function setProgress(
+  id: string | undefined,
+  stage: QueryProgress["stage"],
+  detail: string | null = null
+): void {
+  if (!id) return
+  queryProgress.set(id, { stage, detail })
+}
+
+const progressInput = z.object({ id: z.string().min(1).max(100) })
+
+/** Read the current stage of an in-flight `runQuery` call. */
+export const getQueryProgress = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => progressInput.parse(data))
+  .handler(({ data }): QueryProgress | null => {
+    return queryProgress.get(data.id) ?? null
+  })
 
 const fullResponseInput = z.object({
   name: z.string().min(1),
@@ -1710,6 +1746,7 @@ export const runQuery = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<RunQueryResult> => {
     const start = performance.now()
     const { question, model, contextLength, toolUseTrained, history } = data
+    const progressId = data.progressId
 
     // `effectiveContext` drives history trimming (falls back to the
     // requested size if we can't confirm a load). `loadedContext` is the
@@ -1757,6 +1794,7 @@ export const runQuery = createServerFn({ method: "POST" })
     }
 
     try {
+      setProgress(progressId, "load")
       // NOTE: the load probe may shrink the context to fit this machine, so
       //       trim against what LM Studio ACTUALLY loaded — not what the
       //       client asked for — or you'd overflow a window that got backed
@@ -1822,6 +1860,7 @@ export const runQuery = createServerFn({ method: "POST" })
       // WHY: low temperature on the tool-picking call. Small models
       //      pick tools more reliably when you sample close to
       //      deterministic — keep the creativity for the answer call.
+      setProgress(progressId, "think")
       const t0 = performance.now()
       let first: Awaited<ReturnType<typeof client.chat.completions.create>>
       try {
@@ -1907,6 +1946,11 @@ export const runQuery = createServerFn({ method: "POST" })
         //      same pattern OpenAI and Anthropic recommend — the model
         //      asks for N things, you run them concurrently, then send
         //      back N results in one shot.
+        setProgress(
+          progressId,
+          "tools",
+          resolvedCalls.map((c) => c.name).join(" + ")
+        )
         // NOTE: the phase timer wraps the whole batch — parallel calls
         //       overlap, so summing per-call durations would report more
         //       time than actually passed. Each call's own duration still
@@ -1999,6 +2043,7 @@ export const runQuery = createServerFn({ method: "POST" })
 
         // WHY: nudge the temperature up a bit on the answer call so
         //      the response sounds natural without losing determinism.
+        setProgress(progressId, "answer")
         const t3 = performance.now()
         let second: Awaited<ReturnType<typeof client.chat.completions.create>>
         try {
@@ -2163,5 +2208,7 @@ export const runQuery = createServerFn({ method: "POST" })
         conversationTokens: 0,
         loadedContext,
       }
+    } finally {
+      if (progressId) queryProgress.delete(progressId)
     }
   })
