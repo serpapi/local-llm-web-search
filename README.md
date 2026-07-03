@@ -78,7 +78,7 @@ Two LM Studio settings matter at the edges:
 
 The app uses LM Studio's **native** API (`http://localhost:1234/api/v1`) for listing, loading, and unloading models, and the **OpenAI-compatible** API (`http://localhost:1234/v1`) for chat completions. On the load endpoint, the app sends `model`, `context_length`, and `flash_attention`. A `ttl` key is not accepted there and returns HTTP 400, so the app never sends one.
 
-**Idle auto-unload.** The app loads models explicitly so it can size the context window to your machine, which pins them. Per [LM Studio's docs](https://lmstudio.ai/docs/api/ttl-and-auto-evict), models loaded this way "do not have a TTL, and will remain loaded until you manually unload them", because LM Studio's idle-TTL only evicts JIT-loaded models. So the app handles the idle unload itself. After each query it arms a timer that unloads the model once it has been idle for five minutes. Override the window with `LMSTUDIO_TTL_SECONDS`.
+**Idle auto-unload.** The app loads models explicitly so it can size the context window to your machine, which pins them. Per [LM Studio's docs](https://lmstudio.ai/docs/developer/core/ttl-and-auto-evict), models loaded this way "do not have a TTL, and will remain loaded in memory until you manually unload them", because LM Studio's idle-TTL only evicts JIT-loaded models. So the app handles the idle unload itself. After each query it arms a timer that unloads the model once it has been idle for five minutes. Override the window with `LMSTUDIO_TTL_SECONDS`.
 
 ## Troubleshooting
 

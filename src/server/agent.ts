@@ -60,7 +60,7 @@ const SERPAPI_TIMEOUT_MS = 20_000
 // request does NOT evict a pinned one (verified against the live server). So
 // the app reproduces the idle-unload itself: after each query it arms a timer
 // (see `armIdleUnload`) that unloads the model once it has been idle this long.
-// Mirrors LM Studio's 5-minute default; override with LMSTUDIO_TTL_SECONDS.
+// Five minutes is this app's own default; override with LMSTUDIO_TTL_SECONDS.
 const LM_STUDIO_IDLE_TTL_SECONDS = (() => {
   const raw = Number(process.env.LMSTUDIO_TTL_SECONDS)
   return Number.isFinite(raw) && raw > 0 ? raw : 300
