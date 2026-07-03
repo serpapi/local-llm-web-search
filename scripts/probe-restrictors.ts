@@ -132,6 +132,37 @@ const PROBES: Array<Probe> = [
       "best_flights[*].flights[*].arrival_airport.id",
     ],
   },
+  {
+    tool: "google_hotels_search",
+    rawFixture: "google-hotels.json",
+    outFile: "google-hotels-restricted.json",
+    params: {
+      engine: "google_hotels",
+      q: "hotels in Barcelona",
+      check_in_date: dateInFuture(30),
+      check_out_date: dateInFuture(33),
+      adults: 2,
+      currency: "USD",
+    },
+    formatterPaths: [
+      "properties[*].name",
+      "properties[*].rate_per_night.lowest",
+      "properties[*].total_rate.lowest",
+      "properties[*].overall_rating",
+      "properties[*].reviews",
+    ],
+  },
+  {
+    tool: "google_shopping_search",
+    rawFixture: "google-shopping.json",
+    outFile: "google-shopping-restricted.json",
+    params: { engine: "google_shopping", q: "airpods pro 2" },
+    formatterPaths: [
+      "shopping_results[*].title",
+      "shopping_results[*].price",
+      "shopping_results[*].source",
+    ],
+  },
 ]
 
 function dateInFuture(days: number): string {

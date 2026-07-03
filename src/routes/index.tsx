@@ -153,6 +153,19 @@ function exampleFlightDate(): string {
   return d.toISOString().slice(0, 10)
 }
 
+// A 3-night hotel stay on the same horizon as the flight example, so the
+// trip-planning example reads as one coherent itinerary.
+function exampleHotelDates(): { checkIn: string; checkOut: string } {
+  const checkIn = new Date()
+  checkIn.setMonth(checkIn.getMonth() + 2)
+  const checkOut = new Date(checkIn)
+  checkOut.setDate(checkOut.getDate() + 3)
+  return {
+    checkIn: checkIn.toISOString().slice(0, 10),
+    checkOut: checkOut.toISOString().slice(0, 10),
+  }
+}
+
 function buildExamples(): Array<ExampleGroup> {
   return [
     {
@@ -179,6 +192,14 @@ function buildExamples(): Array<ExampleGroup> {
           label: "Flights",
           question: `Flights from JFK to LAX on ${exampleFlightDate()}`,
         },
+        {
+          label: "Hotels",
+          question: `Hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut} for 2 adults`,
+        },
+        {
+          label: "Shopping",
+          question: "Best price for AirPods Pro 2",
+        },
       ],
     },
     {
@@ -196,11 +217,15 @@ function buildExamples(): Array<ExampleGroup> {
     },
     {
       title: "Edge case",
-      description: "Parallel tool calls — two finance searches in one turn.",
+      description: "Parallel tool calls — multiple engines in one turn.",
       items: [
         {
           label: "Multi-entity",
           question: "Compare the current prices of AAPL and TSLA",
+        },
+        {
+          label: "Trip planning",
+          question: `Find flights from JFK to BCN on ${exampleHotelDates().checkIn} and hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut}`,
         },
       ],
     },

@@ -311,6 +311,81 @@ export const TOOLS: Array<ChatCompletionTool> = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "google_hotels_search",
+      description:
+        "Search hotels and vacation rentals for a location and date range, with nightly/total prices, rating, and hotel class. Requires check-in and check-out dates.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Where to stay, e.g. 'hotels in Barcelona' or 'beach resorts in Cancun'.",
+          },
+          check_in_date: {
+            type: "string",
+            description: "Check-in date in YYYY-MM-DD format.",
+          },
+          check_out_date: {
+            type: "string",
+            description:
+              "Check-out date in YYYY-MM-DD format. Must be after check_in_date.",
+          },
+          adults: {
+            type: "integer",
+            description: "Number of adults (default 2).",
+          },
+          currency: {
+            type: "string",
+            description:
+              "Three-letter currency code (e.g. 'USD', 'EUR', 'CLP'). Default 'USD'.",
+          },
+          gl: {
+            type: "string",
+            description:
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+          },
+          hl: {
+            type: "string",
+            description:
+              "Two-letter language code (e.g. 'en', 'es'). Match the user's language.",
+          },
+        },
+        required: ["query", "check_in_date", "check_out_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "google_shopping_search",
+      description:
+        "Search Google Shopping for product listings with price, seller, and rating. Use for price comparisons and 'where to buy' questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The product to search for, e.g. 'AirPods Pro 2'.",
+          },
+          gl: {
+            type: "string",
+            description:
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+          },
+          hl: {
+            type: "string",
+            description:
+              "Two-letter language code (e.g. 'en', 'es'). Match the user's language.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
 ]
 
 // NOTE: SerpApi responses are dynamic JSON. The executors below probe
@@ -369,6 +444,20 @@ const googleFlightsArgs = z.object({
   hl: z.string().optional(),
   travel_class: z.enum(["1", "2", "3", "4"]).optional(),
 })
+const googleHotelsArgs = z.object({
+  query: z.string().min(1),
+  check_in_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  check_out_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  adults: z.number().int().positive().max(20).optional(),
+  currency: z.string().optional(),
+  gl: z.string().optional(),
+  hl: z.string().optional(),
+})
+const googleShoppingArgs = z.object({
+  query: z.string().min(1),
+  gl: z.string().optional(),
+  hl: z.string().optional(),
+})
 
 // NOTE: keyed by `RestrictorTool` so this map, `TOOL_EXECUTORS`, and the
 //       `RESTRICTORS` map in `restrictors.ts` are guaranteed to cover the
@@ -380,6 +469,8 @@ const TOOL_SCHEMAS: Record<RestrictorTool, z.ZodType> = {
   google_news_search: googleNewsArgs,
   google_maps_search: googleMapsArgs,
   google_flights_search: googleFlightsArgs,
+  google_hotels_search: googleHotelsArgs,
+  google_shopping_search: googleShoppingArgs,
 }
 
 // WHY: tool args are always JSON primitives — the Zod schemas only accept
@@ -479,6 +570,8 @@ type GoogleFinanceArgs = z.infer<typeof googleFinanceArgs>
 type GoogleNewsArgs = z.infer<typeof googleNewsArgs>
 type GoogleMapsArgs = z.infer<typeof googleMapsArgs>
 type GoogleFlightsArgs = z.infer<typeof googleFlightsArgs>
+type GoogleHotelsArgs = z.infer<typeof googleHotelsArgs>
+type GoogleShoppingArgs = z.infer<typeof googleShoppingArgs>
 
 // WHY: SerpApi rejects regional codes like "eu", "apac", "latam" as `gl`
 //      even though models love producing them. Dropping anything that isn't
@@ -597,6 +690,32 @@ export function toolParams(
         ...(a.return_date ? { return_date: a.return_date } : {}),
         ...(hl ? { hl } : {}),
         ...(a.travel_class ? { travel_class: a.travel_class } : {}),
+      }
+    }
+    case "google_hotels_search": {
+      const a = args as GoogleHotelsArgs
+      const gl = normalizeCountryCode(a.gl)
+      const hl = normalizeLanguageCode(a.hl)
+      return {
+        engine: "google_hotels",
+        q: a.query,
+        check_in_date: a.check_in_date,
+        check_out_date: a.check_out_date,
+        adults: a.adults ?? 2,
+        currency: a.currency ?? "USD",
+        ...(gl ? { gl } : {}),
+        ...(hl ? { hl } : {}),
+      }
+    }
+    case "google_shopping_search": {
+      const a = args as GoogleShoppingArgs
+      const gl = normalizeCountryCode(a.gl)
+      const hl = normalizeLanguageCode(a.hl)
+      return {
+        engine: "google_shopping",
+        q: a.query,
+        ...(gl ? { gl } : {}),
+        ...(hl ? { hl } : {}),
       }
     }
   }
@@ -757,7 +876,7 @@ export const CONTEXT_SEGMENTS: Array<{
   {
     key: "tool_definitions",
     label: "Tool definitions",
-    description: "JSON schema for the 5 SerpApi tools, sent on every call.",
+    description: "JSON schema for the SerpApi tools, sent on every call.",
   },
   {
     key: "system_prompt",
@@ -817,21 +936,24 @@ function buildSystemPrompt(): string {
   return `You are a research assistant with access to real-time web search.
 Today's date is ${today}.
 
-You have five tools:
+You have seven tools:
 - google_search: Google web search (general knowledge, current events).
 - google_finance_search: Real-time stocks, currencies, indices.
 - google_news_search: Breaking news with source and date.
 - google_maps_search: Local businesses and places with rating and address.
 - google_flights_search: Flight prices between two IATA-coded airports.
+- google_hotels_search: Hotel and vacation-rental prices for a location and date range.
+- google_shopping_search: Product listings with price, seller, and rating.
 
 Rules:
 - Use a tool whenever the question requires current information.
 - Time-sensitive queries (flight prices, stock prices, news, weather, sports scores, business hours) MUST trigger a fresh tool call every turn — NEVER replay a prior answer from conversation history, even if the question is identical. Stale prices and outdated news are worse than a slightly slower answer.
 - When the user asks about multiple entities (compare X and Y, prices of A, B, C), request ALL tool calls in the same turn — one call per entity — instead of chaining them.
-- For flights and maps, render the results as a compact markdown table directly from the tool response — one row per place or flight, with the most useful columns first (name, price/rating, key detail). Add one short summary line afterward (cheapest / top pick).
+- For flights, hotels, maps, and shopping, render the results as a compact markdown table directly from the tool response — one row per item, with the most useful columns first (name, price/rating, key detail). Add one short summary line afterward (cheapest / top pick).
 - For flights, always use IATA codes (e.g. SCL, MAD, JFK, LAX).
+- For hotels, check_in_date and check_out_date are required (YYYY-MM-DD). If the user gives no dates, pick a reasonable near-future range based on today's date and state which dates you assumed.
 - For google_news_search, pass the topic ONLY in \`query\` — never include words like "news", "latest", "últimas". The tool already sorts by recency.
-- Localization: when the user writes in a language other than English, set \`hl\` (language code like "es") on every tool that supports it, and \`gl\` (country code like "cl", "es", "mx") on tools that support it. This applies to google_search, google_news_search, google_maps_search, and google_flights_search (hl only for finance/flights).
+- Localization: when the user writes in a language other than English, set \`hl\` (language code like "es") on every tool that supports it, and \`gl\` (country code like "cl", "es", "mx") on tools that support it. Every tool takes \`hl\`; every tool except finance and flights also takes \`gl\`.
 - \`gl\` is ALWAYS a single country (ISO 3166-1 alpha-2: us, gb, de, fr, jp, mx, cl, ...). It is NEVER a region — do not use "eu", "apac", "latam", "emea". If the topic is a region (e.g. "EU AI Act", "European elections", "Asian markets"), either omit \`gl\` or pick one representative country (e.g. "gb" or "de" for European topics).
 - If google_news_search returns an empty result set, immediately call google_search with the same topic before giving up. Some subjects (niche tech, B2B products, internal tooling) have no dedicated news coverage but plenty of general web results.
 - Cite sources as markdown links: [name](url).
@@ -857,6 +979,8 @@ function extractSearchUrl(raw: SerpApiJson): string | null {
     "google_news_url",
     "google_maps_url",
     "google_flights_url",
+    "google_hotels_url",
+    "google_shopping_url",
   ]) {
     if (typeof meta[key] === "string") return meta[key]
   }
@@ -880,6 +1004,10 @@ function toolCallLabel(tc: ToolCallInfo): string {
       return `Maps · ${a.query ?? ""}`
     case "google_flights_search":
       return `Flights · ${a.departure_id ?? "?"} → ${a.arrival_id ?? "?"}`
+    case "google_hotels_search":
+      return `Hotels · ${a.query ?? ""}`
+    case "google_shopping_search":
+      return `Shopping · ${a.query ?? ""}`
     default:
       return tc.name
   }

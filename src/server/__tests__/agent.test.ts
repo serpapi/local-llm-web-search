@@ -332,6 +332,15 @@ describe("validateToolArgs", () => {
       })
     ).toThrow(/outbound_date/)
   })
+
+  it("requires both hotel dates", () => {
+    expect(() =>
+      validateToolArgs("google_hotels_search", {
+        query: "hotels in Barcelona",
+        check_in_date: "2026-08-01",
+      })
+    ).toThrow(/check_out_date/)
+  })
 })
 
 describe("toolParams", () => {
@@ -391,6 +400,35 @@ describe("toolParams", () => {
       return_date: "2026-08-15",
       travel_class: "3",
     })
+  })
+
+  it("defaults hotels to 2 adults in USD", () => {
+    expect(
+      toolParams("google_hotels_search", {
+        query: "hotels in Barcelona",
+        check_in_date: "2026-08-01",
+        check_out_date: "2026-08-04",
+      })
+    ).toEqual({
+      engine: "google_hotels",
+      q: "hotels in Barcelona",
+      check_in_date: "2026-08-01",
+      check_out_date: "2026-08-04",
+      adults: 2,
+      currency: "USD",
+    })
+  })
+
+  it("builds a google_shopping request and drops a bloc gl", () => {
+    expect(
+      toolParams("google_shopping_search", { query: "airpods pro 2" })
+    ).toEqual({ engine: "google_shopping", q: "airpods pro 2" })
+    expect(
+      toolParams("google_shopping_search", {
+        query: "airpods pro 2",
+        gl: "latam",
+      })
+    ).not.toHaveProperty("gl")
   })
 })
 

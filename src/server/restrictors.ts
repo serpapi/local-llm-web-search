@@ -38,6 +38,8 @@ export const RESTRICTOR_TOOLS = [
   "google_news_search",
   "google_maps_search",
   "google_flights_search",
+  "google_hotels_search",
+  "google_shopping_search",
 ] as const
 
 export type RestrictorTool = (typeof RESTRICTOR_TOOLS)[number]
@@ -97,6 +99,22 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_flights_search: [
     "best_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
     "other_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
+  ].join(","),
+
+  // `amenities` and `nearby_places` are intentionally excluded: both are
+  // long lists that bloat the context without changing which hotel the
+  // model recommends — price, rating, and class carry the decision.
+  google_hotels_search: [
+    "properties[0:5].{name,type,link,hotel_class,overall_rating,reviews,rate_per_night.lowest,total_rate.lowest,check_in_time,check_out_time}",
+  ].join(","),
+
+  // `shopping_results` is the regular grid; `inline_shopping_results`
+  // covers queries where Google answers with an inline carousel instead.
+  // Both `link` and `product_link` are listed because results carry one
+  // or the other depending on the seller.
+  google_shopping_search: [
+    "shopping_results[0:5].{title,link,product_link,source,price,extracted_price,old_price,rating,reviews,delivery}",
+    "inline_shopping_results[0:3].{title,link,source,price,extracted_price,rating,reviews}",
   ].join(","),
 }
 
@@ -215,5 +233,38 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "other_flights[*].layovers[*].name",
     "other_flights[*].layovers[*].duration",
     "search_metadata.google_flights_url",
+  ],
+  google_hotels_search: [
+    "properties[*].name",
+    "properties[*].type",
+    "properties[*].link",
+    "properties[*].hotel_class",
+    "properties[*].overall_rating",
+    "properties[*].reviews",
+    "properties[*].rate_per_night.lowest",
+    "properties[*].total_rate.lowest",
+    "properties[*].check_in_time",
+    "properties[*].check_out_time",
+    "search_metadata.google_hotels_url",
+  ],
+  google_shopping_search: [
+    "shopping_results[*].title",
+    "shopping_results[*].link",
+    "shopping_results[*].product_link",
+    "shopping_results[*].source",
+    "shopping_results[*].price",
+    "shopping_results[*].extracted_price",
+    "shopping_results[*].old_price",
+    "shopping_results[*].rating",
+    "shopping_results[*].reviews",
+    "shopping_results[*].delivery",
+    "inline_shopping_results[*].title",
+    "inline_shopping_results[*].link",
+    "inline_shopping_results[*].source",
+    "inline_shopping_results[*].price",
+    "inline_shopping_results[*].extracted_price",
+    "inline_shopping_results[*].rating",
+    "inline_shopping_results[*].reviews",
+    "search_metadata.google_shopping_url",
   ],
 }

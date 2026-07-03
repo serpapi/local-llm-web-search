@@ -72,6 +72,23 @@ const PROBES: Array<Probe> = [
     },
     note: "one-way flight — exercises best_flights + other_flights",
   },
+  {
+    filename: "google-hotels.json",
+    params: {
+      engine: "google_hotels",
+      q: "hotels in Barcelona",
+      check_in_date: dateInFuture(30),
+      check_out_date: dateInFuture(33),
+      adults: 2,
+      currency: "USD",
+    },
+    note: "city stay — exercises properties with rates and ratings",
+  },
+  {
+    filename: "google-shopping.json",
+    params: { engine: "google_shopping", q: "airpods pro 2" },
+    note: "product query — exercises shopping_results grid",
+  },
 ]
 
 function dateInFuture(days: number): string {

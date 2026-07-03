@@ -8,7 +8,7 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 
 - Runs a chat UI built on **TanStack Start** and **shadcn/ui**.
 - Talks to a local model served by **LM Studio** through its OpenAI-compatible API at `http://localhost:1234/v1`.
-- Gives the model **five named SerpApi tools**: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, and `google_flights_search`.
+- Gives the model **seven named SerpApi tools**: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, `google_flights_search`, `google_hotels_search`, and `google_shopping_search`.
 - Trims each SerpApi response server-side with the **`json_restrictor`** parameter, so the model only ever receives the fields it needs to answer. The sidebar compares raw against restricted, where the cut is around 99 percent.
 - Shows a live **token breakdown** of the context window and a **latency breakdown** for each phase: choosing the tool, calling SerpApi, and writing the answer.
 - Validates tool arguments with **Zod** and returns typed errors with a suggestion the user can act on.
@@ -63,11 +63,11 @@ The app runs **one model at a time**. Selecting a model unloads any other loaded
 
 ### Configuration
 
-| Env var                   | Default | Effect                                                                                                                                   |
-| ------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `LMSTUDIO_URL`            | `http://localhost:1234` | Base URL of the LM Studio server. Both the OpenAI-compatible (`/v1`) and native (`/api/v1`) endpoints derive from it, so one variable covers a non-default port or a server on another machine. |
-| `LMSTUDIO_CONTEXT_LENGTH` | unset   | Pin an exact context size (tokens, 4096 or higher) and skip the probe. Set it when you know what your machine fits. If the pinned size does not fit, the load fails and the app keeps whatever was already loaded. |
-| `LMSTUDIO_TTL_SECONDS`    | `300`   | Seconds an idle model stays loaded before the app unloads it. See [Idle auto-unload](#endpoints) below.                                   |
+| Env var                   | Default                 | Effect                                                                                                                                                                                                             |
+| ------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LMSTUDIO_URL`            | `http://localhost:1234` | Base URL of the LM Studio server. Both the OpenAI-compatible (`/v1`) and native (`/api/v1`) endpoints derive from it, so one variable covers a non-default port or a server on another machine.                    |
+| `LMSTUDIO_CONTEXT_LENGTH` | unset                   | Pin an exact context size (tokens, 4096 or higher) and skip the probe. Set it when you know what your machine fits. If the pinned size does not fit, the load fails and the app keeps whatever was already loaded. |
+| `LMSTUDIO_TTL_SECONDS`    | `300`                   | Seconds an idle model stays loaded before the app unloads it. See [Idle auto-unload](#endpoints) below.                                                                                                            |
 
 Two LM Studio settings matter at the edges:
 
@@ -82,23 +82,25 @@ The app uses LM Studio's **native** API (`http://localhost:1234/api/v1`) for lis
 
 ## Troubleshooting
 
-| Symptom                                                 | What to try                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Failed to fetch http://localhost:1234/v1/models`       | LM Studio isn't running or the OpenAI-compatible server is off. Start it from LM Studio → **Developer** → **Start Server**, then verify with `curl http://localhost:1234/v1/models`.                                                                                                   |
-| `SerpApi rejected the API key` (401)                    | Re-check `SERPAPI_API_KEY` in `.env`. Restart `bun dev` after editing, since the app reads env at module load.                                                                                                                                                                         |
-| `EADDRINUSE: address already in use :::3000`            | Another process holds port 3000. Either kill it (`lsof -i :3000` then `kill <pid>`) or run on a different port: `vite dev --port 3001`.                                                                                                                                                |
-| Model picks the wrong tool or hallucinates args         | Switch to a larger function-calling model such as Qwen 3.5 9B or Llama 3.1 8B Instruct. Models below 7B are unreliable with `tool_choice: "auto"`.                                                                                                                                     |
+| Symptom                                                   | What to try                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Failed to fetch http://localhost:1234/v1/models`         | LM Studio isn't running or the OpenAI-compatible server is off. Start it from LM Studio → **Developer** → **Start Server**, then verify with `curl http://localhost:1234/v1/models`.                                                                                                  |
+| `SerpApi rejected the API key` (401)                      | Re-check `SERPAPI_API_KEY` in `.env`. Restart `bun dev` after editing, since the app reads env at module load.                                                                                                                                                                        |
+| `EADDRINUSE: address already in use :::3000`              | Another process holds port 3000. Either kill it (`lsof -i :3000` then `kill <pid>`) or run on a different port: `vite dev --port 3001`.                                                                                                                                               |
+| Model picks the wrong tool or hallucinates args           | Switch to a larger function-calling model such as Qwen 3.5 9B or Llama 3.1 8B Instruct. Models below 7B are unreliable with `tool_choice: "auto"`.                                                                                                                                    |
 | Conversation forgets context fast, or "loaded" reads 4096 | The model is stuck at LM Studio's default window. Read the [Context window sizing](#context-window-sizing) section. The sidebar's "loaded" value shows what was actually loaded. If it is low, your machine is backing off (load a smaller model) or your guardrails are over-strict. |
 
 ## Available tools
 
-| Tool                    | Example query                         |
-| ----------------------- | ------------------------------------- |
-| `google_search`         | Who won the last F1 race?             |
-| `google_finance_search` | What's the current price of AAPL?     |
-| `google_news_search`    | Latest news about AI regulation       |
-| `google_maps_search`    | Barbecue restaurants in Austin, Texas |
-| `google_flights_search` | Flights from SCL to MAD on 2026-05-15 |
+| Tool                     | Example query                                  |
+| ------------------------ | ---------------------------------------------- |
+| `google_search`          | Who won the last F1 race?                      |
+| `google_finance_search`  | What's the current price of AAPL?              |
+| `google_news_search`     | Latest news about AI regulation                |
+| `google_maps_search`     | Barbecue restaurants in Austin, Texas          |
+| `google_flights_search`  | Flights from SCL to MAD on 2026-05-15          |
+| `google_hotels_search`   | Hotels in Barcelona, May 15–18, for two adults |
+| `google_shopping_search` | Best price for AirPods Pro 2                   |
 
 Each tool sends a `json_restrictor` string with its SerpApi call. SerpApi trims the response on its own servers down to the handful of fields the model needs to answer. The token breakdown sidebar shows how much context each tool saves on every query.
 
@@ -117,15 +119,15 @@ There is no CI in this repo. Run `bun run typecheck`, `bun run lint`, and `bun r
 
 ## Files
 
-| Path                                 | Purpose                                                                                                                                |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Path                                 | Purpose                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/server/agent.ts`                | Tools, Zod schemas, executors, token counting, the idle-unload timer, and the `runQuery` server function. Every SerpApi call happens here, so the key never leaves the server. |
-| `src/server/restrictors.ts`          | The `json_restrictor` string and kept-field list for each of the five engines.                                                         |
-| `src/routes/index.tsx`               | Chat page, token breakdown sidebar, latency panel, and dark-mode toggle.                                                               |
-| `src/components/error-boundary.tsx`  | App-wide error boundary with a reload fallback.                                                                                         |
-| `src/components/ui/*`                | shadcn/ui primitives.                                                                                                                  |
-| `src/server/__tests__/agent.test.ts` | Unit tests for history trimming, secret redaction, inline tool-call parsing, country-code normalization, and context sizing.           |
-| `.env.example`                       | Environment variable template.                                                                                                         |
+| `src/server/restrictors.ts`          | The `json_restrictor` string and kept-field list for each of the seven engines.                                                                                                |
+| `src/routes/index.tsx`               | Chat page, token breakdown sidebar, latency panel, and dark-mode toggle.                                                                                                       |
+| `src/components/error-boundary.tsx`  | App-wide error boundary with a reload fallback.                                                                                                                                |
+| `src/components/ui/*`                | shadcn/ui primitives.                                                                                                                                                          |
+| `src/server/__tests__/agent.test.ts` | Unit tests for history trimming, secret redaction, inline tool-call parsing, country-code normalization, and context sizing.                                                   |
+| `.env.example`                       | Environment variable template.                                                                                                                                                 |
 
 ## Security
 
@@ -133,7 +135,7 @@ The app reads `SERPAPI_API_KEY` only inside `src/server/agent.ts`, which runs in
 
 ## Notes
 
-### Why five named tools instead of one generic `search(engine, query)`
+### Why named per-engine tools instead of one generic `search(engine, query)`
 
 Small models in the 4B to 9B range reliably pick a tool by **name**, but they often mis-set string parameters like `engine`. Splitting the work into specific tools (`google_search`, `google_news_search`, and the rest) removes a whole class of tool-argument errors. You write a few more tool definitions and avoid many failed calls.
 
