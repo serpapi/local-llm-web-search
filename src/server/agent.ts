@@ -680,12 +680,17 @@ export function toolParams(
     case "google_flights_search": {
       const a = args as GoogleFlightsArgs
       const hl = normalizeLanguageCode(a.hl)
+      // WHY: models sometimes claim a round trip (`type: "1"`) without
+      //      providing a return date, which SerpApi rejects with a 400.
+      //      The return date is the source of truth: present → round
+      //      trip, absent → one-way, whatever the model said.
+      const type = a.return_date ? "1" : "2"
       return {
         engine: "google_flights",
         departure_id: a.departure_id,
         arrival_id: a.arrival_id,
         outbound_date: a.outbound_date,
-        type: a.type ?? "2",
+        type,
         currency: a.currency ?? "USD",
         ...(a.return_date ? { return_date: a.return_date } : {}),
         ...(hl ? { hl } : {}),

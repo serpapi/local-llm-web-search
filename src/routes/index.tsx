@@ -459,7 +459,10 @@ function App() {
           id: newId(),
           role: "assistant",
           content: result.answer,
-          toolCalls: result.toolCalls,
+          // WHY: on a failed turn `toolCalls` is an empty array, which
+          //      would render a misleading "Direct answer" badge under
+          //      the error text — omit the panel entirely instead.
+          toolCalls: result.ok ? result.toolCalls : undefined,
           sources: result.sources,
           elapsedMs: result.elapsedMs,
           phases: result.phases,
@@ -1447,10 +1450,14 @@ function LatencyCard({
   const total = segments.reduce((sum, s) => sum + phases[s.key], 0)
   if (total === 0) return null
 
-  // Tokens/sec on the final answer call. Uses exactUsage.completionTokens
-  // (from LM Studio) divided by our measured secondInferenceMs — gives a
-  // practical "how fast is this machine running this model" number.
-  const answerMs = phases.secondInferenceMs
+  // Tokens/sec on the answer call. Uses exactUsage.completionTokens (from
+  // LM Studio) divided by the phase that actually generated the answer —
+  // the second call after tools, or the first (and only) call on a direct
+  // answer. Gives a practical "how fast is this machine running this
+  // model" number either way.
+  const answerMs = directAnswer
+    ? phases.firstInferenceMs
+    : phases.secondInferenceMs
   const tokPerSec =
     completionTokens != null && answerMs > 0
       ? Math.round(completionTokens / (answerMs / 1000))

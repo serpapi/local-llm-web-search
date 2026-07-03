@@ -402,6 +402,28 @@ describe("toolParams", () => {
     })
   })
 
+  it("derives the trip type from the return date, not the model's claim", () => {
+    // Regression: a model claimed type "1" (round trip) with no return
+    // date and SerpApi rejected the call with a 400.
+    expect(
+      toolParams("google_flights_search", {
+        departure_id: "JFK",
+        arrival_id: "BCN",
+        outbound_date: "2026-09-03",
+        type: "1",
+      })
+    ).toMatchObject({ type: "2" })
+    expect(
+      toolParams("google_flights_search", {
+        departure_id: "JFK",
+        arrival_id: "BCN",
+        outbound_date: "2026-09-03",
+        return_date: "2026-09-10",
+        type: "2",
+      })
+    ).toMatchObject({ type: "1", return_date: "2026-09-10" })
+  })
+
   it("defaults hotels to 2 adults in USD", () => {
     expect(
       toolParams("google_hotels_search", {
