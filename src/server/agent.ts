@@ -1529,11 +1529,19 @@ export function parseInlineToolCalls(content: string): Array<InlineToolCall> {
  *      trailing XML. Stripping it before showing the answer keeps
  *      parser noise out of the chat.
  */
-function stripInlineToolCalls(content: string): string {
-  return content
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
-    .replace(/<tool_call>[\s\S]*$/i, "")
-    .trim()
+export function stripInlineToolCalls(content: string): string {
+  return (
+    content
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+      .replace(/<tool_call>[\s\S]*$/i, "")
+      // NOTE: weak models sometimes interleave broken fragments of the
+      //       tool-call XML into their prose (orphan </tool_call>, stray
+      //       <arg_key>/<arg_value> tags). Those tags never occur in a
+      //       real answer, and everything from the first fragment onward
+      //       is argument soup — drop it.
+      .replace(/<\/?(?:tool_call|arg_key|arg_value)[^>]*>[\s\S]*$/i, "")
+      .trim()
+  )
 }
 
 /**

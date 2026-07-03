@@ -10,6 +10,7 @@ import {
   recommendedContext,
   redactSecrets,
   sanitizeHistoryForReplay,
+  stripInlineToolCalls,
   toolParams,
   trimHistoryToFit,
   validateToolArgs,
@@ -451,6 +452,32 @@ describe("toolParams", () => {
         gl: "latam",
       })
     ).not.toHaveProperty("gl")
+  })
+})
+
+describe("stripInlineToolCalls", () => {
+  it("leaves clean prose untouched", () => {
+    expect(stripInlineToolCalls("NVDA is trading at $194.83.")).toBe(
+      "NVDA is trading at $194.83."
+    )
+  })
+
+  it("removes a well-formed tool_call block and keeps the prose", () => {
+    expect(
+      stripInlineToolCalls(
+        'Let me check.\n<tool_call>{"name":"google_search"}</tool_call>'
+      )
+    ).toBe("Let me check.")
+  })
+
+  it("drops trailing argument soup from malformed inline calls", () => {
+    // Regression: glm-4.6v-flash interleaved broken tool-call XML into
+    // its answer prose instead of emitting a well-formed block.
+    const answer =
+      "I will now search for hotels in Barcelona.\n</tool_call>sort</arg_key>\n<arg_value>best_match</arg_value>\n</tool_call>max_price</arg_key>"
+    expect(stripInlineToolCalls(answer)).toBe(
+      "I will now search for hotels in Barcelona."
+    )
   })
 })
 
