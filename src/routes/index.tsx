@@ -924,9 +924,9 @@ function ChatPanel({
 
 function EmptyChatState() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-2 px-4 py-12 text-center duration-500 fade-in">
       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-        <Sparkles className="h-5 w-5 text-muted-foreground" />
+        <Sparkles className="h-5 w-5 text-serpapi-blue" />
       </div>
       <p className="text-sm font-medium text-foreground">Ready when you are.</p>
       <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
@@ -934,7 +934,7 @@ function EmptyChatState() {
         <span className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
           Examples
         </span>{" "}
-        below to try these examples.
+        below to try all seven SerpApi engines.
       </p>
     </div>
   )
@@ -1002,7 +1002,11 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
 
   if (isUser) {
     return (
-      <Message className="justify-end" role="article" aria-label="Your message">
+      <Message
+        className="animate-in justify-end duration-300 fade-in slide-in-from-bottom-2"
+        role="article"
+        aria-label="Your message"
+      >
         <MessageContent className="max-w-[85%] rounded-2xl serpapi-gradient text-sm text-white [&_*]:text-white">
           {message.content}
         </MessageContent>
@@ -1017,7 +1021,7 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <Message
-      className="justify-start"
+      className="animate-in justify-start duration-300 fade-in slide-in-from-bottom-2"
       role={message.isError ? "alert" : "article"}
       aria-label={message.isError ? "Error response" : "Assistant response"}
     >
@@ -1322,7 +1326,7 @@ function HeroTotal({
       {budget != null ? (
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="absolute inset-y-0 left-0 rounded-full serpapi-gradient"
+            className="absolute inset-y-0 left-0 rounded-full serpapi-gradient transition-[width] duration-500 ease-out"
             style={{ width: `${Math.max(0.5, pctUsed)}%` }}
           />
         </div>
@@ -1369,7 +1373,7 @@ function StackedBar({
         return (
           <div
             key={seg.key}
-            className={seg.color}
+            className={`${seg.color} transition-[width] duration-500 ease-out`}
             style={{ width: `${seg.pct * 100}%` }}
             title={`${seg.label}: ${seg.count.toLocaleString()} (${Math.round(seg.pct * 100)}%)`}
           />
@@ -1474,7 +1478,7 @@ function LatencyCard({
           return (
             <div
               key={s.key}
-              className={s.color}
+              className={`${s.color} transition-[width] duration-500 ease-out`}
               style={{ width: `${(ms / total) * 100}%` }}
               title={`${s.label}: ${ms}ms`}
             />
@@ -1644,7 +1648,7 @@ function ReductionBar({
       </span>
       <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full ${
+          className={`h-full rounded-full transition-[width] duration-500 ease-out ${
             tone === "gradient" ? "serpapi-gradient" : "bg-muted-foreground/40"
           }`}
           style={{ width: `${widthPct}%` }}
