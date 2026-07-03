@@ -214,7 +214,13 @@ export function RestrictorDialog({
                 <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/40 p-3">
                   <div className="flex items-baseline gap-1.5">
                     <span className="font-mono text-xl font-semibold tabular-nums">
-                      {Math.round((1 - call.tokens / full.tokens) * 100)}%
+                      {full.tokens > 0
+                        ? Math.max(
+                            0,
+                            Math.round((1 - call.tokens / full.tokens) * 100)
+                          )
+                        : 0}
+                      %
                     </span>
                     <span className="text-xs text-muted-foreground">
                       smaller

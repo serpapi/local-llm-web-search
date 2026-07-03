@@ -710,6 +710,10 @@ export type Phases = {
 }
 
 export type RunQueryResult = {
+  // WHY: false when the turn produced no fresh metrics (an error, or the
+  //      non-tool-model fast path). The client keeps the previous sidebar
+  //      state instead of overwriting it with this result's zeros.
+  ok: boolean
   answer: string
   breakdown: Breakdown
   exactUsage: ExactUsage | null
@@ -1608,6 +1612,7 @@ export const runQuery = createServerFn({ method: "POST" })
     //      front than to let them watch a blank loop.
     if (toolUseTrained === false) {
       return {
+        ok: false,
         answer:
           "This model isn't trained for tool use, so it can't call SerpApi. Pick a tool-trained model (Qwen 3.x, Llama 3.1/3.2, Mistral) in the dropdown above.",
         breakdown: emptyBreakdown(),
@@ -1774,6 +1779,11 @@ export const runQuery = createServerFn({ method: "POST" })
         //      same pattern OpenAI and Anthropic recommend — the model
         //      asks for N things, you run them concurrently, then send
         //      back N results in one shot.
+        // NOTE: the phase timer wraps the whole batch — parallel calls
+        //       overlap, so summing per-call durations would report more
+        //       time than actually passed. Each call's own duration still
+        //       ships as `serpApiMs`.
+        const toolPhaseStart = performance.now()
         const executed = await Promise.all(
           resolvedCalls.map(async (call) => {
             const validated = validateToolArgs(call.name, call.args)
@@ -1820,6 +1830,7 @@ export const runQuery = createServerFn({ method: "POST" })
             return { call, validated, response, restrictor, execMs }
           })
         )
+        phases.toolExecutionMs = Math.round(performance.now() - toolPhaseStart)
 
         for (const r of executed) {
           const responseTokens = countTokens(r.response)
@@ -1834,7 +1845,6 @@ export const runQuery = createServerFn({ method: "POST" })
           rawResults.push(r.response)
           breakdown.tool_call += countTokens(r.call.rawArgs)
           breakdown.tool_result += responseTokens
-          phases.toolExecutionMs += Math.round(r.execMs)
         }
 
         // WHY: rebuild the assistant turn so the second completion
@@ -1990,6 +2000,7 @@ export const runQuery = createServerFn({ method: "POST" })
         countTokens(sanitizeHistoryForReplay(nextHistory))
 
       return {
+        ok: true,
         answer,
         breakdown,
         exactUsage,
@@ -2008,6 +2019,7 @@ export const runQuery = createServerFn({ method: "POST" })
     } catch (err) {
       const elapsedMs = Math.round(performance.now() - start)
       return {
+        ok: false,
         answer: formatAgentError(err),
         breakdown: emptyBreakdown(),
         exactUsage: null,

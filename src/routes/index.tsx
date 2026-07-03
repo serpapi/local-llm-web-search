@@ -418,24 +418,33 @@ function App() {
           phases: result.phases,
         },
       ])
-      setBreakdown(result.breakdown)
-      setExactUsage(result.exactUsage)
-      setLatestPhases(result.phases)
-      setLatestModelContext({
-        // WHY: the server's load probe may have backed the context off to
-        //      fit this machine, so trust the size it reports actually
-        //      loaded. Fall back to the requested size only when the server
-        //      couldn't confirm a load (e.g. LM Studio unreachable).
-        loaded: result.loadedContext ?? selectedModel.recommendedContextLength,
-        max: selectedModel.maxContextLength,
-      })
+      // WHY: a failed turn resolves (not rejects) with `ok: false` and
+      //      all-zero metrics, while the conversation itself is unchanged.
+      //      Overwriting the sidebar with those zeros would make it look
+      //      like the context was wiped when it wasn't — keep the last
+      //      real turn's numbers instead.
+      if (result.ok) {
+        setBreakdown(result.breakdown)
+        setExactUsage(result.exactUsage)
+        setLatestPhases(result.phases)
+        setLatestModelContext({
+          // WHY: the server's load probe may have backed the context off to
+          //      fit this machine, so trust the size it reports actually
+          //      loaded. Fall back to the requested size only when the server
+          //      couldn't confirm a load (e.g. LM Studio unreachable).
+          loaded:
+            result.loadedContext ?? selectedModel.recommendedContextLength,
+          max: selectedModel.maxContextLength,
+        })
+        setTrimmedTurns(result.trimmedTurns)
+        setConversationTokens(result.conversationTokens)
+        setLatestToolCalls(result.toolCalls)
+      }
       // Replace with the server's authoritative history (includes the new
       // user turn, tool calls/results, and the assistant answer — already
-      // trimmed if needed). Next submit sends this back verbatim.
+      // trimmed if needed; unchanged on a failed turn). Next submit sends
+      // this back verbatim.
       setConversationMessages(result.messages as Array<ConversationMessage>)
-      setTrimmedTurns(result.trimmedTurns)
-      setConversationTokens(result.conversationTokens)
-      setLatestToolCalls(result.toolCalls)
     } catch (err) {
       const errorText = `**Error:** ${
         err instanceof Error ? err.message : String(err)
@@ -1113,7 +1122,6 @@ function BreakdownBody({
   onInspectRaw?: () => void
 }) {
   const estimate = contextTotal(breakdown)
-  const total = exactUsage?.totalTokens ?? estimate
 
   // Rank segments by size so the compact list leads with the biggest movers.
   const orderedSegments = [...CONTEXT_SEGMENTS]
@@ -1129,12 +1137,19 @@ function BreakdownBody({
     <div className="flex flex-col gap-5">
       <HeroTotal
         conversationTokens={conversationTokens}
-        lastTurnTotal={total}
+        lastTurnTotal={estimate}
         exactUsage={exactUsage}
         modelContext={modelContext}
       />
       <StackedBar segments={orderedSegments} total={estimate} />
       <SegmentList segments={orderedSegments} />
+      {breakdown.tool_result > 0 ? (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Tool call + result tokens are sent to the model this turn, then
+          dropped from conversation memory — so the segments above can add up to
+          more than “Context used”.
+        </p>
+      ) : null}
       {phases ? (
         <LatencyCard
           phases={phases}
@@ -1174,13 +1189,16 @@ function HeroTotal({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+      <span
+        className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
+        title="Tokens the conversation carries into the next turn, estimated with the cl100k tokenizer — the model's own count may differ. Tool payloads are dropped from memory after each turn."
+      >
         Context used
       </span>
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-3xl font-semibold tabular-nums">
-            {conversationTokens.toLocaleString()}
+            ~{conversationTokens.toLocaleString()}
           </span>
           {budget != null ? (
             <span className="font-mono text-base text-muted-foreground tabular-nums">
@@ -1205,10 +1223,16 @@ function HeroTotal({
         </div>
       ) : null}
       <div className="flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
-        <span>
+        <span
+          title={
+            exactUsage
+              ? "Ground truth from LM Studio for this turn's final inference call (the tool-picking call is billed separately)."
+              : "Estimated with the cl100k tokenizer."
+          }
+        >
           {exactUsage
-            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out this turn`
-            : `${lastTurnTotal.toLocaleString()} tokens this turn`}
+            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out · final call`
+            : `~${lastTurnTotal.toLocaleString()} tokens this turn`}
         </span>
         {maxLabel ? <span>{maxLabel}</span> : null}
       </div>
@@ -1270,7 +1294,7 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
               {seg.count.toLocaleString()}
             </span>
             <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
-              {pct > 0 ? `${pct}%` : "—"}
+              {pct > 0 ? `${pct}%` : seg.count > 0 ? "<1%" : "—"}
             </span>
           </li>
         )
@@ -1286,6 +1310,10 @@ function LatencyCard({
   phases: Phases
   completionTokens: number | null
 }) {
+  // WHY: with no tool call there is no second inference — the first call
+  //      IS the answer, so labelling it "Pick tool" would be wrong.
+  const directAnswer =
+    phases.toolExecutionMs === 0 && phases.secondInferenceMs === 0
   const segments: Array<{
     key: keyof Phases
     label: string
@@ -1293,7 +1321,7 @@ function LatencyCard({
   }> = [
     {
       key: "firstInferenceMs",
-      label: "Pick tool",
+      label: directAnswer ? "Answer" : "Pick tool",
       color: "bg-serpapi-blue",
     },
     {
@@ -1447,10 +1475,19 @@ function ReductionView({
   fullMs: number
   filteredMs: number
 }) {
+  // NOTE: the "full" response comes from a separate, later SerpApi call,
+  //       so on volatile engines (news, finance) it can legitimately come
+  //       back smaller than the filtered one — clamp instead of showing a
+  //       negative "smaller" or an Infinity-wide bar.
   const smallerPct =
-    fullTokens > 0 ? Math.round((1 - filteredTokens / fullTokens) * 100) : 0
+    fullTokens > 0
+      ? Math.max(0, Math.round((1 - filteredTokens / fullTokens) * 100))
+      : 0
   const msSaved = fullMs - filteredMs
-  const filteredWidth = Math.max(2, (filteredTokens / fullTokens) * 100)
+  const filteredWidth =
+    fullTokens > 0
+      ? Math.max(2, Math.min(100, (filteredTokens / fullTokens) * 100))
+      : 100
 
   return (
     <div className="flex flex-col gap-3">
