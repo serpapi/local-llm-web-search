@@ -31,9 +31,14 @@ import type {
 // ─── Endpoints ─────────────────────────────────────────
 // LM Studio exposes both an OpenAI-compatible API (`/v1`) and its own native
 // admin API (`/api/v1`). Chat traffic goes through the OpenAI path; load /
-// unload / model listing go through the native one.
-const LM_STUDIO_URL = "http://localhost:1234/v1"
-const LM_STUDIO_NATIVE_URL = "http://localhost:1234/api/v1"
+// unload / model listing go through the native one. Both paths derive from
+// one base URL so LMSTUDIO_URL moves them together (non-default port, or a
+// server on another machine).
+const LM_STUDIO_BASE_URL = (
+  process.env.LMSTUDIO_URL ?? "http://localhost:1234"
+).replace(/\/+$/, "")
+const LM_STUDIO_URL = `${LM_STUDIO_BASE_URL}/v1`
+const LM_STUDIO_NATIVE_URL = `${LM_STUDIO_BASE_URL}/api/v1`
 
 // ─── Timeouts ──────────────────────────────────────────
 // Chat is generous because cold-loading a large model can take 30–40s on

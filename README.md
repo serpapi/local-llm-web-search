@@ -65,6 +65,7 @@ The app runs **one model at a time**. Selecting a model unloads any other loaded
 
 | Env var                   | Default | Effect                                                                                                                                   |
 | ------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `LMSTUDIO_URL`            | `http://localhost:1234` | Base URL of the LM Studio server. Both the OpenAI-compatible (`/v1`) and native (`/api/v1`) endpoints derive from it, so one variable covers a non-default port or a server on another machine. |
 | `LMSTUDIO_CONTEXT_LENGTH` | unset   | Pin an exact context size (tokens, 4096 or higher) and skip the probe. Set it when you know what your machine fits. If the pinned size does not fit, the load fails and the app keeps whatever was already loaded. |
 | `LMSTUDIO_TTL_SECONDS`    | `300`   | Seconds an idle model stays loaded before the app unloads it. See [Idle auto-unload](#endpoints) below.                                   |
 
