@@ -623,11 +623,10 @@ function Header({
             + Local LLM
           </h1>
           <p className="text-sm text-muted-foreground">
-            Powered by{" "}
-            <span className="font-medium text-foreground">
-              SerpApi function calling
-            </span>{" "}
-            on LM Studio.
+            Local inference by{" "}
+            <span className="font-medium text-foreground">LM Studio</span>. Live
+            web data by{" "}
+            <span className="font-medium text-foreground">SerpApi</span>.
           </p>
         </div>
       </div>
