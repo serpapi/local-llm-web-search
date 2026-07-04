@@ -86,7 +86,7 @@ const PROBES: Array<Probe> = [
   },
   {
     filename: "google-shopping.json",
-    params: { engine: "google_shopping", q: "airpods pro 2" },
+    params: { engine: "google_shopping", q: "airpods pro 3" },
     note: "product query — exercises shopping_results grid",
   },
 ]

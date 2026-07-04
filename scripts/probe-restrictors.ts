@@ -156,7 +156,7 @@ const PROBES: Array<Probe> = [
     tool: "google_shopping_search",
     rawFixture: "google-shopping.json",
     outFile: "google-shopping-restricted.json",
-    params: { engine: "google_shopping", q: "airpods pro 2" },
+    params: { engine: "google_shopping", q: "airpods pro 3" },
     formatterPaths: [
       "shopping_results[*].title",
       "shopping_results[*].price",

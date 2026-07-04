@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   Braces,
   CheckCircle2,
+  Eraser,
   FlaskConical,
   Loader2,
   Moon,
@@ -28,6 +29,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -59,7 +61,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import {
   CONTEXT_SEGMENTS,
   contextTotal,
@@ -201,13 +202,13 @@ function buildExamples(): Array<ExampleGroup> {
         },
         {
           label: "Shopping",
-          question: "Best price for AirPods Pro 2",
+          question: "Best price for AirPods Pro 3",
         },
       ],
     },
     {
       title: "No tools",
-      description: "Model answers on its own — no API calls.",
+      description: "Model answers on its own, no API calls.",
       items: [
         { label: "Arithmetic", question: "What is 2+2?" },
         { label: "Percentage", question: "What is 15% of 240?" },
@@ -220,7 +221,7 @@ function buildExamples(): Array<ExampleGroup> {
     },
     {
       title: "Edge case",
-      description: "Parallel tool calls — multiple engines in one turn.",
+      description: "Parallel tool calls: multiple engines in one turn.",
       items: [
         {
           label: "Multi-entity",
@@ -564,6 +565,7 @@ function App() {
             isLoading={isLoading}
             progress={liveProgress}
             onSubmit={submit}
+            onClear={clearChat}
             canSubmit={canSubmit}
             turnsInMemory={
               conversationMessages.filter((m) => m.role === "user").length
@@ -583,7 +585,6 @@ function App() {
                 ? () => setRawFormattedOpen(true)
                 : undefined
             }
-            onClear={clearChat}
           />
         </div>
       </div>
@@ -838,6 +839,7 @@ function ChatPanel({
   isLoading,
   progress,
   onSubmit,
+  onClear,
   canSubmit,
   turnsInMemory,
   trimmedTurns,
@@ -848,6 +850,7 @@ function ChatPanel({
   isLoading: boolean
   progress: QueryProgress | null
   onSubmit: () => void
+  onClear: () => void
   canSubmit: boolean
   turnsInMemory: number
   trimmedTurns: number
@@ -860,12 +863,24 @@ function ChatPanel({
           trimmedTurns > 0
             ? ` · ${trimmedTurns} older turn${trimmedTurns === 1 ? "" : "s"} dropped to fit`
             : ""
-        } · Clear chat to start fresh.`
+        }`
   return (
     <Card className="flex min-h-[70svh] flex-col gap-0 overflow-hidden py-0 lg:h-full lg:min-h-0">
       <CardHeader className="shrink-0 border-b py-4">
         <CardTitle>Chat</CardTitle>
         <CardDescription>{description}</CardDescription>
+        <CardAction>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            disabled={isLoading || messages.length === 0}
+            className="h-8 gap-1.5 rounded-full text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Eraser className="h-3.5 w-3.5" />
+            Clear chat
+          </Button>
+        </CardAction>
       </CardHeader>
 
       <ChatContainerRoot
@@ -1113,31 +1128,31 @@ function ToolBadge({ toolCall }: { toolCall: ToolCallInfo }) {
 
 function SourcesList({ sources }: { sources: Array<Source> }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Sources
       </span>
-      <ul className="flex flex-col gap-0.5">
+      <ul className="flex flex-wrap gap-1.5">
         {sources.map((s) => {
           const isSerpApi = s.label.startsWith("SerpApi")
           return (
-            <li key={s.url} className="flex items-center gap-1.5 text-xs">
-              <span
-                aria-hidden
-                className={
-                  isSerpApi
-                    ? "inline-block h-2 w-2 shrink-0 rounded-full serpapi-gradient"
-                    : "inline-block h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40"
-                }
-              />
+            <li key={s.url} className="min-w-0">
               <a
                 href={s.url}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="group inline-flex min-w-0 items-center gap-1 truncate text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                className="group inline-flex max-w-72 items-center gap-1.5 rounded-full border border-border/60 bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
               >
+                <span
+                  aria-hidden
+                  className={
+                    isSerpApi
+                      ? "inline-block h-2 w-2 shrink-0 rounded-full serpapi-gradient"
+                      : "inline-block h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40"
+                  }
+                />
                 <span className="truncate">{s.label}</span>
-                <ArrowUpRight className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                <ArrowUpRight className="h-3 w-3 shrink-0 opacity-40 transition-opacity group-hover:opacity-100" />
               </a>
             </li>
           )
@@ -1156,7 +1171,6 @@ function BreakdownPanel({
   toolCalls,
   fullFetch,
   onInspectRaw,
-  onClear,
 }: {
   breakdown: Breakdown | null
   exactUsage: ExactUsage | null
@@ -1166,7 +1180,6 @@ function BreakdownPanel({
   toolCalls: Array<ToolCallInfo>
   fullFetch: FullFetchState
   onInspectRaw?: () => void
-  onClear: () => void
 }) {
   return (
     <Card className="flex flex-col lg:h-full lg:min-h-0">
@@ -1192,12 +1205,6 @@ function BreakdownPanel({
             onInspectRaw={onInspectRaw}
           />
         )}
-        <div className="mt-auto flex flex-col gap-3 pt-2">
-          <Separator />
-          <Button variant="outline" size="sm" onClick={onClear}>
-            Clear chat
-          </Button>
-        </div>
       </CardContent>
     </Card>
   )
@@ -1257,9 +1264,9 @@ function BreakdownBody({
       <SegmentList segments={orderedSegments} />
       {breakdown.tool_result > 0 ? (
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Tool call + result tokens are sent to the model this turn, then
-          dropped from conversation memory — so the segments above can add up to
-          more than “Context used”.
+          Tool call and result tokens are sent to the model this turn, then
+          dropped from conversation memory. That is why the segments above can
+          add up to more than “Context used”.
         </p>
       ) : null}
       {phases ? (
@@ -1303,7 +1310,7 @@ function HeroTotal({
     <div className="flex flex-col gap-2">
       <span
         className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
-        title="Tokens the conversation carries into the next turn, estimated with the cl100k tokenizer — the model's own count may differ. Tool payloads are dropped from memory after each turn."
+        title="Tokens the conversation carries into the next turn, estimated with the cl100k tokenizer. Local models typically count 10-30% higher. Tool payloads are dropped from memory after each turn."
       >
         Context used
       </span>
@@ -1338,7 +1345,7 @@ function HeroTotal({
         <span
           title={
             exactUsage
-              ? "Ground truth from LM Studio for this turn's final inference call (the tool-picking call is billed separately)."
+              ? "Ground truth from LM Studio for this turn's final inference call. The tool-picking call is counted separately, and the output includes any hidden reasoning tokens."
               : "Estimated with the cl100k tokenizer."
           }
         >
@@ -1406,7 +1413,7 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
               {seg.count.toLocaleString()}
             </span>
             <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
-              {pct > 0 ? `${pct}%` : seg.count > 0 ? "<1%" : "—"}
+              {pct > 0 ? `${pct}%` : seg.count > 0 ? "<1%" : "–"}
             </span>
           </li>
         )

@@ -10,7 +10,8 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Talks to a local model served by **LM Studio** through its OpenAI-compatible API at `http://localhost:1234/v1`.
 - Gives the model **seven named SerpApi tools**: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, `google_flights_search`, `google_hotels_search`, and `google_shopping_search`.
 - Trims each SerpApi response server-side with the **`json_restrictor`** parameter, so the model only ever receives the fields it needs to answer. The sidebar compares raw against restricted, where the cut is around 99 percent.
-- Shows a live **token breakdown** of the context window and a **latency breakdown** for each phase: choosing the tool, calling SerpApi, and writing the answer.
+- Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then a **token breakdown** of the context window and a **latency breakdown** for those same phases.
+- Lists every SERP the model consulted as clickable **sources** under the answer. The restrictor keeps `search_metadata.<engine>_url` for that link, and the server strips it before the model sees the response.
 - Validates tool arguments with **Zod** and returns typed errors with a suggestion the user can act on.
 - Keeps the SerpApi key server-side through a TanStack Start server function. The key never ships in a client bundle.
 
@@ -100,7 +101,7 @@ The app uses LM Studio's **native** API (`http://localhost:1234/api/v1`) for lis
 | `google_maps_search`     | Barbecue restaurants in Austin, Texas          |
 | `google_flights_search`  | Flights from SCL to MAD on 2026-05-15          |
 | `google_hotels_search`   | Hotels in Barcelona, May 15–18, for two adults |
-| `google_shopping_search` | Best price for AirPods Pro 2                   |
+| `google_shopping_search` | Best price for AirPods Pro 3                   |
 
 Each tool sends a `json_restrictor` string with its SerpApi call. SerpApi trims the response on its own servers down to the handful of fields the model needs to answer. The token breakdown sidebar shows how much context each tool saves on every query.
 
@@ -149,7 +150,11 @@ The model only ever receives the restricted response. The app fetches the full, 
 
 ### How multi-turn chat fits the window
 
-Each turn sends the full conversation history back to the model, the same pattern OpenAI and Anthropic document for tool use. The client accumulates messages (user questions, assistant answers, tool calls, tool results) and ships them on every `runQuery`. When the history plus the current turn would pass about 80 percent of the loaded context, the server drops the oldest non-system messages until it fits. The chat header shows `N turns in memory`, and `N older turns dropped to fit` when trimming starts. **Clear chat** resets the history to zero.
+Each turn sends the full conversation history back to the model, the same pattern OpenAI and Anthropic document for tool use. The client accumulates messages (user questions, assistant answers, tool calls, tool results) and ships them on every `runQuery`. When the history plus the current turn would pass about 70 percent of the loaded context, the server drops the oldest non-system messages until it fits. The chat header shows `N turns in memory`, and `N older turns dropped to fit` when trimming starts. **Clear chat** resets the history to zero.
+
+### How accurate the token estimate is
+
+The sidebar estimates with tiktoken's `cl100k_base` because the real tokenizer varies per model. Measured against LM Studio's exact prompt counts across Qwen, Gemma, and GLM runs, the estimate lands 3 to 28 percent low; chat-template overhead and tokenizer differences account for the gap. That drift is why the trim threshold sits at 70 percent, why the big number carries a `~`, and why the `in / out` line under it (the model's own count for the final call) is the ground truth. The output side of that line also includes any hidden reasoning tokens, so it can be much larger than the visible answer.
 
 ### Which model to load
 

@@ -56,6 +56,11 @@ export function isRestrictorTool(name: string): name is RestrictorTool {
 /**
  * Per-tool `json_restrictor` strings, one per engine. Each is a
  * comma-separated list of paths SerpApi keeps in the response.
+ *
+ * Every restrictor also keeps `search_metadata.<engine>_url`, the link to
+ * the live SERP behind the result. The agent captures that URL for the
+ * Sources panel and then removes `search_metadata` before the model sees
+ * the response, so the model's context stays limited to answer fields.
  */
 export const RESTRICTORS: Record<RestrictorTool, string> = {
   // Three branches, only the present ones come through per query:
@@ -65,6 +70,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
     "answer_box.{answer,snippet,title}",
     "knowledge_graph.{title,type,description,source.{name,link}}",
     "organic_results[0:5].{title,link,displayed_link,snippet,date}",
+    "search_metadata.google_url",
   ].join(","),
 
   // `summary.market` and `summary.extensions` are intentionally
@@ -75,6 +81,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
     "summary.{title,price,currency,date,exchange,stock,price_movement.{value,percentage,movement}}",
     "knowledge_graph.key_stats.stats[].{label,value}",
     "news_results[0:3].{snippet,title,source,link,date}",
+    "search_metadata.google_finance_url",
   ].join(","),
 
   // Google News groups stories into clusters with a top-level `title`
@@ -84,6 +91,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   // `news_results[].stories[0].title`.
   google_news_search: [
     "news_results[0:5].{title,link,source,date,snippet,stories[0:1].{title,link,source.name,date,snippet}}",
+    "search_metadata.google_news_url",
   ].join(","),
 
   // `local_results` is the regular search; `place_results` covers the
@@ -91,6 +99,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_maps_search: [
     "local_results[0:5].{title,rating,reviews,type,address,price,open_state,phone,website,gps_coordinates}",
     "place_results.{title,rating,reviews,type,address,price,open_state,phone,website}",
+    "search_metadata.google_maps_url",
   ].join(","),
 
   // SerpApi returns flights in two pools: `best_flights` (top
@@ -99,6 +108,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_flights_search: [
     "best_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
     "other_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
+    "search_metadata.google_flights_url",
   ].join(","),
 
   // `amenities` and `nearby_places` are intentionally excluded: both are
@@ -106,6 +116,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   // model recommends — price, rating, and class carry the decision.
   google_hotels_search: [
     "properties[0:5].{name,type,link,hotel_class,overall_rating,reviews,rate_per_night.lowest,total_rate.lowest,check_in_time,check_out_time}",
+    "search_metadata.google_hotels_url",
   ].join(","),
 
   // `shopping_results` is the regular grid; `inline_shopping_results`
@@ -115,18 +126,19 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_shopping_search: [
     "shopping_results[0:5].{title,link,product_link,source,price,extracted_price,old_price,rating,reviews,delivery}",
     "inline_shopping_results[0:3].{title,link,source,price,extracted_price,rating,reviews}",
+    "search_metadata.google_shopping_url",
   ].join(","),
 }
 
 /**
- * The same fields as `RESTRICTORS`, expanded to one flat path per leaf.
- * The UI matches these against the response tree to highlight which keys
- * came through — `[*]` stands for any array index. `search_metadata.*_url`
- * is included because SerpApi always returns `search_metadata` regardless
- * of the restrictor, and the UI links to it as the result's source.
+ * The fields the MODEL receives, expanded to one flat path per leaf. The
+ * UI matches these against the response tree to highlight which keys came
+ * through; `[*]` stands for any array index. `search_metadata` is absent
+ * on purpose: the restrictor keeps its `<engine>_url` for the Sources
+ * panel, but the agent strips it before the model sees the response.
  *
- * Keep this in sync with `RESTRICTORS` above: every leaf one string keeps
- * should have a matching entry here.
+ * Keep this in sync with `RESTRICTORS` above: every model-visible leaf a
+ * string keeps should have a matching entry here.
  */
 export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
   google_search: [
@@ -143,7 +155,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "organic_results[*].displayed_link",
     "organic_results[*].snippet",
     "organic_results[*].date",
-    "search_metadata.google_url",
   ],
   google_finance_search: [
     "summary.title",
@@ -162,7 +173,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "news_results[*].source",
     "news_results[*].link",
     "news_results[*].date",
-    "search_metadata.google_finance_url",
   ],
   google_news_search: [
     "news_results[*].title",
@@ -175,7 +185,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "news_results[*].stories[*].source.name",
     "news_results[*].stories[*].date",
     "news_results[*].stories[*].snippet",
-    "search_metadata.google_news_url",
   ],
   google_maps_search: [
     "local_results[*].title",
@@ -197,7 +206,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "place_results.open_state",
     "place_results.phone",
     "place_results.website",
-    "search_metadata.google_maps_url",
   ],
   google_flights_search: [
     "best_flights[*].price",
@@ -232,7 +240,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "other_flights[*].layovers[*].id",
     "other_flights[*].layovers[*].name",
     "other_flights[*].layovers[*].duration",
-    "search_metadata.google_flights_url",
   ],
   google_hotels_search: [
     "properties[*].name",
@@ -245,7 +252,6 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "properties[*].total_rate.lowest",
     "properties[*].check_in_time",
     "properties[*].check_out_time",
-    "search_metadata.google_hotels_url",
   ],
   google_shopping_search: [
     "shopping_results[*].title",
@@ -265,6 +271,5 @@ export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
     "inline_shopping_results[*].extracted_price",
     "inline_shopping_results[*].rating",
     "inline_shopping_results[*].reviews",
-    "search_metadata.google_shopping_url",
   ],
 }

@@ -161,7 +161,7 @@ export const TOOLS: Array<ChatCompletionTool> = [
           gl: {
             type: "string",
             description:
-              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country. Do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
           },
           hl: {
             type: "string",
@@ -219,7 +219,7 @@ export const TOOLS: Array<ChatCompletionTool> = [
           gl: {
             type: "string",
             description:
-              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country. Do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
           },
           hl: {
             type: "string",
@@ -248,7 +248,7 @@ export const TOOLS: Array<ChatCompletionTool> = [
           gl: {
             type: "string",
             description:
-              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country. Do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
           },
           hl: {
             type: "string",
@@ -346,7 +346,7 @@ export const TOOLS: Array<ChatCompletionTool> = [
           gl: {
             type: "string",
             description:
-              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country. Do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
           },
           hl: {
             type: "string",
@@ -374,7 +374,7 @@ export const TOOLS: Array<ChatCompletionTool> = [
           gl: {
             type: "string",
             description:
-              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country — do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
+              "ISO 3166-1 alpha-2 country code (e.g. 'us', 'gb', 'de', 'fr', 'jp', 'mx', 'cl'). Must be a single country. Do NOT use regional codes like 'eu', 'apac', 'latam'. If the user mentions a region, pick a representative country.",
           },
           hl: {
             type: "string",
@@ -509,7 +509,7 @@ export function validateToolArgs(toolName: string, rawArgs: unknown): ToolArgs {
       .join("; ")
     throw new ToolArgError(
       `Tool args failed validation for ${toolName}: ${details}`,
-      "The model produced malformed arguments. Small models sometimes do this — try rephrasing the question."
+      "The model produced malformed arguments. Small models sometimes do this. Try rephrasing the question."
     )
   }
   return result.data as ToolArgs
@@ -542,7 +542,7 @@ async function serpApi(params: Record<string, unknown>): Promise<SerpApiJson> {
     if (err instanceof InvalidArgumentError) {
       throw new SerpApiError(
         `SerpApi rejected the arguments: ${err.message}`,
-        "The model produced malformed tool arguments. Zod validation should have caught this — if not, try rephrasing the question."
+        "The model produced malformed tool arguments. Zod validation should have caught this. If it did not, try rephrasing the question."
       )
     }
     const msg = err instanceof Error ? err.message : String(err)
@@ -952,16 +952,16 @@ You have seven tools:
 
 Rules:
 - Use a tool whenever the question requires current information.
-- Time-sensitive queries (flight prices, stock prices, news, weather, sports scores, business hours) MUST trigger a fresh tool call every turn — NEVER replay a prior answer from conversation history, even if the question is identical. Stale prices and outdated news are worse than a slightly slower answer.
-- When the user asks about multiple entities (compare X and Y, prices of A, B, C), request ALL tool calls in the same turn — one call per entity — instead of chaining them.
-- For flights, hotels, maps, and shopping, render the results as a compact markdown table directly from the tool response — one row per item, with the most useful columns first (name, price/rating, key detail). Add one short summary line afterward (cheapest / top pick).
+- Time-sensitive queries (flight prices, stock prices, news, weather, sports scores, business hours) MUST trigger a fresh tool call every turn. NEVER replay a prior answer from conversation history, even if the question is identical. Stale prices and outdated news are worse than a slightly slower answer.
+- When the user asks about multiple entities (compare X and Y, prices of A, B, C), request ALL tool calls in the same turn, one call per entity, instead of chaining them.
+- For flights, hotels, maps, and shopping, render the results as a compact markdown table directly from the tool response: one row per item, with the most useful columns first (name, price/rating, key detail). Add one short summary line afterward (cheapest / top pick).
 - For flights, always use IATA codes (e.g. SCL, MAD, JFK, LAX).
 - For hotels, check_in_date and check_out_date are required (YYYY-MM-DD). If the user gives no dates, pick a reasonable near-future range based on today's date and state which dates you assumed.
-- For google_news_search, pass the topic ONLY in \`query\` — never include words like "news", "latest", "últimas". The tool already sorts by recency.
+- For google_news_search, pass the topic ONLY in \`query\`. Never include words like "news", "latest", "últimas". The tool already sorts by recency.
 - Localization: when the user writes in a language other than English, set \`hl\` (language code like "es") on every tool that supports it, and \`gl\` (country code like "cl", "es", "mx") on tools that support it. Every tool takes \`hl\`; every tool except finance and flights also takes \`gl\`.
-- \`gl\` is ALWAYS a single country (ISO 3166-1 alpha-2: us, gb, de, fr, jp, mx, cl, ...). It is NEVER a region — do not use "eu", "apac", "latam", "emea". If the topic is a region (e.g. "EU AI Act", "European elections", "Asian markets"), either omit \`gl\` or pick one representative country (e.g. "gb" or "de" for European topics).
+- \`gl\` is ALWAYS a single country (ISO 3166-1 alpha-2: us, gb, de, fr, jp, mx, cl, ...). It is NEVER a region. Do not use "eu", "apac", "latam", "emea". If the topic is a region (e.g. "EU AI Act", "European elections", "Asian markets"), either omit \`gl\` or pick one representative country (e.g. "gb" or "de" for European topics).
 - If google_news_search returns an empty result set, immediately call google_search with the same topic before giving up. Some subjects (niche tech, B2B products, internal tooling) have no dedicated news coverage but plenty of general web results.
-- Cite sources as markdown links: [name](url).
+- Cite sources as markdown links: [name](url). Never write a plain-text source line like "Source: NASDAQ"; every search you run is listed automatically in a Sources panel under your answer.
 - Do not invent or assume dates. Report only what the results say.
 - After receiving tool results, write the final answer in prose. Do not emit additional tool calls.
 `
@@ -1639,10 +1639,12 @@ const fullResponseInput = z.object({
 
 // WHY: sliding window — keep the system prompt + tools intact and drop
 //      the oldest turns when the conversation won't fit in
-//      `contextBudget × ratio`. The 20% headroom is what you reserve for
-//      the current user message, new tool calls, tool results, and the
-//      final answer.
-const HISTORY_FIT_RATIO = 0.8
+//      `contextBudget × ratio`. The 30% headroom covers two things: the
+//      answer the model hasn't generated yet, and tokenizer drift —
+//      cl100k estimates measured 1.03-1.28× LOW against LM Studio's real
+//      prompt counts across qwen/gemma/glm runs, so a 0.8 ratio could
+//      overflow a full window (0.8 × 1.28 ≈ 1.02) while 0.7 stays safe.
+const HISTORY_FIT_RATIO = 0.7
 
 /**
  * Strip prior tool cycles from history before resending it to the model.
@@ -1661,7 +1663,7 @@ export function sanitizeHistoryForReplay(
 ): Array<ChatCompletionMessageParam> {
   const out: Array<ChatCompletionMessageParam> = []
   const REPLAY_NOTE =
-    "[Previously answered using a live tool. Data may be stale — re-run the tool for fresh results.]"
+    "[Previously answered using a live tool. Data may be stale. Re-run the tool for fresh results.]"
   for (let i = 0; i < history.length; i++) {
     const m = history[i]
     if (m.role === "tool") continue
@@ -1895,7 +1897,9 @@ export const runQuery = createServerFn({ method: "POST" })
       const msg = first.choices[0].message
       let answer = ""
       const toolCalls: Array<ToolCallInfo> = []
-      const rawResults: Array<SerpApiJson> = []
+      // One entry per executed call: the SERP link captured from
+      // `search_metadata` before it was stripped from the model's view.
+      const toolSearchUrls: Array<string | null> = []
       // NOTE: usage from the final call is ground truth — LM Studio's
       //       own tokenizer, not the cl100k estimate.
       let finalUsage = first.usage
@@ -1918,7 +1922,7 @@ export const runQuery = createServerFn({ method: "POST" })
           if (call.type !== "function") {
             throw new LmStudioError(
               `Unexpected tool call type: ${call.type}`,
-              "The model returned a non-function tool call — this shouldn't happen with OpenAI-compat APIs."
+              "The model returned a non-function tool call. This shouldn't happen with OpenAI-compat APIs."
             )
           }
           let args: Record<string, unknown>
@@ -2012,7 +2016,16 @@ export const runQuery = createServerFn({ method: "POST" })
               }
             }
 
-            return { call, validated, response, restrictor, execMs }
+            // WHY: the restrictor keeps `search_metadata.<engine>_url` so
+            //      the Sources panel can link to the live SERP, but the
+            //      model doesn't need that URL to answer — capture it,
+            //      then drop the metadata from what the model sees.
+            const searchUrl = extractSearchUrl(response)
+            if (response && typeof response === "object") {
+              delete response.search_metadata
+            }
+
+            return { call, validated, response, restrictor, execMs, searchUrl }
           })
         )
         phases.toolExecutionMs = Math.round(performance.now() - toolPhaseStart)
@@ -2027,7 +2040,7 @@ export const runQuery = createServerFn({ method: "POST" })
             tokens: responseTokens,
             serpApiMs: Math.round(r.execMs),
           })
-          rawResults.push(r.response)
+          toolSearchUrls.push(r.searchUrl)
           breakdown.tool_call += countTokens(r.call.rawArgs)
           breakdown.tool_result += responseTokens
         }
@@ -2069,7 +2082,7 @@ export const runQuery = createServerFn({ method: "POST" })
           const m = err instanceof Error ? err.message : String(err)
           throw new LmStudioError(
             `LM Studio second completion failed: ${m}`,
-            "The model loaded but stalled on the answer call — try a smaller context or reload the model."
+            "The model loaded but stalled on the answer call. Try a smaller context or reload the model."
           )
         }
         phases.secondInferenceMs = Math.round(performance.now() - t3)
@@ -2131,8 +2144,8 @@ export const runQuery = createServerFn({ method: "POST" })
       //      URL, labelled so you can tell parallel calls apart in the
       //      Sources panel (e.g. "Finance · AAPL" vs "Finance · TSLA").
       const toolSources: Array<{ url: string; label: string }> = []
-      for (let i = 0; i < rawResults.length; i++) {
-        const url = extractSearchUrl(rawResults[i])
+      for (let i = 0; i < toolSearchUrls.length; i++) {
+        const url = toolSearchUrls[i]
         if (url) {
           toolSources.push({
             url,
