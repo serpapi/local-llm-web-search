@@ -94,6 +94,21 @@ function lmStudioBaseUrl(): string {
 const lmStudioUrl = () => `${lmStudioBaseUrl()}/v1`
 const lmStudioNativeUrl = () => `${lmStudioBaseUrl()}/api/v1`
 
+// LM Studio 0.4 added a "Require Authentication" server setting (off by
+// default). With it on, every request needs a token from the Developer
+// page, sent as `Authorization: Bearer <token>`.
+function lmStudioApiKey(): string | null {
+  return process.env.LMSTUDIO_API_KEY?.trim() || null
+}
+
+/** Headers for LM Studio's native API, with the token when one is set. */
+function lmStudioHeaders(
+  extra?: Record<string, string>
+): Record<string, string> {
+  const key = lmStudioApiKey()
+  return { ...extra, ...(key ? { Authorization: `Bearer ${key}` } : {}) }
+}
+
 // ─── Timeouts ──────────────────────────────────────────
 // Chat is generous because cold-loading a large model can take 30–40s on
 // first inference; the others fail fast. SerpApi's value is enforced by the
@@ -1486,6 +1501,7 @@ async function allLoadedInstances(): Promise<
 > {
   try {
     const res = await fetch(`${lmStudioNativeUrl()}/models`, {
+      headers: lmStudioHeaders(),
       signal: AbortSignal.timeout(LM_STUDIO_FETCH_TIMEOUT_MS),
     })
     if (!res.ok) return []
@@ -1571,7 +1587,7 @@ async function unloadInstance(id: string): Promise<void> {
   try {
     await fetch(`${lmStudioNativeUrl()}/models/unload`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: lmStudioHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ instance_id: id }),
       signal: AbortSignal.timeout(LM_STUDIO_FETCH_TIMEOUT_MS),
     })
@@ -1649,7 +1665,7 @@ async function tryLoadModel(
   try {
     const res = await fetch(`${lmStudioNativeUrl()}/models/load`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: lmStudioHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         model,
         context_length: contextLength,
@@ -1870,6 +1886,7 @@ export const listModels = createServerFn({ method: "GET" }).handler(
     let res: Response
     try {
       res = await fetch(`${lmStudioNativeUrl()}/models`, {
+        headers: lmStudioHeaders(),
         signal: AbortSignal.timeout(LM_STUDIO_FETCH_TIMEOUT_MS),
       })
     } catch (err) {
@@ -1877,6 +1894,14 @@ export const listModels = createServerFn({ method: "GET" }).handler(
       throw new LmStudioError(
         `Can't reach LM Studio at ${lmStudioNativeUrl()}: ${msg}`,
         "Is LM Studio running on localhost:1234? Open it → Developer tab → Start Server."
+      )
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new LmStudioError(
+        `LM Studio returned ${res.status} on ${lmStudioNativeUrl()}/models`,
+        lmStudioApiKey()
+          ? "LM Studio rejected LMSTUDIO_API_KEY. Create a new token on its Developer page and update .env."
+          : "LM Studio requires authentication. Create a token on its Developer page, set LMSTUDIO_API_KEY in .env, then restart `bun dev`."
       )
     }
     if (!res.ok) {
@@ -2445,7 +2470,8 @@ export const runAgentTurn = createServerOnlyFn(
 
       const client = new OpenAI({
         baseURL: lmStudioUrl(),
-        apiKey: "lm-studio",
+        // LM Studio ignores the key unless "Require Authentication" is on.
+        apiKey: lmStudioApiKey() ?? "lm-studio",
         // WHY: the SDK retries a timed-out request twice by default, silently.
         //      A benchmark then records the retry's answer and timing as if
         //      the first call had produced them. A timeout must surface.

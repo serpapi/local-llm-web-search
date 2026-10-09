@@ -87,6 +87,7 @@ The app runs one model at a time. Each question unloads any other model before i
 | `LMSTUDIO_URL`            | `http://localhost:1234` | Base URL of the LM Studio server. The app builds both the OpenAI-compatible (`/v1`) and native (`/api/v1`) URLs from it.                                                            |
 | `LMSTUDIO_CONTEXT_LENGTH` | unset                   | Load at this size (4,096 or more, rounded down to a multiple of 1,024) and skip the search for a size that fits. If LM Studio refuses it, the turn fails with LM Studio's estimate. |
 | `LMSTUDIO_TTL_SECONDS`    | `300`                   | Seconds an idle model stays loaded before the app unloads it. See [Endpoints](#endpoints).                                                                                          |
+| `LMSTUDIO_API_KEY`        | unset                   | A token from LM Studio's Developer page. Needed only when **Require Authentication** is on in its server settings; the app sends it as `Authorization: Bearer` to both APIs.        |
 
 Two LM Studio settings also matter:
 
