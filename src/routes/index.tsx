@@ -402,10 +402,10 @@ function Header({
             SerpApi Local Agent Lab
           </h1>
           <p className="text-sm text-muted-foreground">
-            Local inference by{" "}
-            <span className="font-medium text-foreground">LM Studio</span>. Live
-            web data by{" "}
-            <span className="font-medium text-foreground">SerpApi</span>.
+            Local inference using{" "}
+            <span className="font-medium text-foreground">LM Studio</span> and
+            live web data by{" "}
+            <span className="font-medium text-foreground">SerpApi</span>
           </p>
         </div>
       </div>
@@ -598,11 +598,12 @@ function ChatPanel({
   onChangeToolOutput: (output: ToolOutput) => void
 }) {
   const disabled = isLoading || !canSubmit
-  // Only once there is history: how many turns the model still sees.
+  // Only once there is history: how many earlier turns the model is sent
+  // again with each question. A failed turn is not kept.
   const description =
     turnsInMemory === 0
       ? null
-      : `${turnsInMemory} turn${turnsInMemory === 1 ? "" : "s"} in memory${
+      : `${turnsInMemory} turn${turnsInMemory === 1 ? "" : "s"} of history${
           trimmedTurns > 0
             ? ` · ${trimmedTurns} older turn${trimmedTurns === 1 ? "" : "s"} dropped to fit`
             : ""
@@ -1296,20 +1297,12 @@ function JsonRestrictorCard({
         <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
           {restricted ? "JSON Restrictor" : "SerpApi response"}
         </span>
-        <div className="flex items-center gap-1">
-          <Badge
-            variant="outline"
-            className="gap-1 font-mono text-[10px] tracking-wide uppercase"
-          >
-            {outputLabel}
-          </Badge>
-          <Badge
-            variant="outline"
-            className="gap-1 font-mono text-[10px] tracking-wide uppercase"
-          >
-            {restricted ? "server-side" : "no restrictor"}
-          </Badge>
-        </div>
+        <Badge
+          variant="outline"
+          className="gap-1 font-mono text-[10px] tracking-wide uppercase"
+        >
+          {outputLabel}
+        </Badge>
       </div>
 
       {fullFetch.status === "done" ? (

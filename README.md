@@ -220,7 +220,7 @@ Every turn sends the conversation so far back to the model, which is how OpenAI 
 
 Before each turn, the server removes earlier tool calls and raw tool results, which are large, and keeps every answer the model wrote. Answers that came from a search carry a note saying their prices, scores, news and opening hours may be out of date. The model can then follow "which of those has the best rating?" or "put the plan together", while the system prompt tells it to search again for anything that changes. Small models otherwise tend to repeat an old answer, such as yesterday's flight prices, as if it were fresh.
 
-When the history and the new turn would pass about 70% of the loaded window, the server drops the oldest turns until it fits. The chat header shows "N turns in memory", and "N older turns dropped to fit" once that starts. Clear chat starts a new session, and its Undo goes back to the old one.
+When the history and the new turn would pass about 70% of the loaded window, the server drops the oldest turns until it fits. The chat header shows "N turns of history", the questions and answers sent again with each new question, and "N older turns dropped to fit" once trimming starts. A turn that failed or ended without an answer is not kept. Clear chat starts a new session, and its Undo goes back to the old one.
 
 The conversation lives on the server, not in the browser tab. A turn runs in the background while the page polls its progress, so reloading the page, closing the tab or an HMR update does not lose the question or the answer. An httpOnly cookie names the session. The server keeps up to 20 sessions in memory, each for a day after its last use, and restarting the server starts a fresh chat.
 
