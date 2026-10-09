@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute } from "@tanstack/react-router"
 import {
   ArrowUpRight,
+  BarChart3,
   Braces,
   CheckCircle2,
   ChevronDown,
@@ -409,6 +410,16 @@ function Header({
         </div>
       </div>
       <div className="flex items-center gap-2">
+        {import.meta.env.DEV ? (
+          // WHY: /bench returns 404 outside `bun run dev`, so the link only
+          //      exists where the page does.
+          <Button asChild variant="outline" size="lg">
+            <Link to="/bench">
+              <BarChart3 data-icon="inline-start" />
+              Benchmark
+            </Link>
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
-import { MessageSquare, Moon, Sun } from "lucide-react"
+import { BarChart3, MessageSquare, Moon, Sun } from "lucide-react"
 
 import {
   Command,
@@ -53,6 +53,15 @@ export function CommandMenu() {
               <MessageSquare aria-hidden />
               Chat
             </CommandItem>
+            {import.meta.env.DEV ? (
+              // WHY: /bench returns 404 outside `bun run dev`.
+              <CommandItem
+                onSelect={() => run(() => navigate({ to: "/bench" }))}
+              >
+                <BarChart3 aria-hidden />
+                Benchmark
+              </CommandItem>
+            ) : null}
           </CommandGroup>
           <CommandGroup heading="Settings">
             <CommandItem onSelect={() => run(toggleTheme)}>

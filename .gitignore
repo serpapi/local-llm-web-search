@@ -18,3 +18,4 @@ measurements
 # Working notes stay local; the TanStack reference ships with the repo.
 docs/*
 !docs/tanstack-start.md
+bench/results/
