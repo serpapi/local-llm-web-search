@@ -12,7 +12,15 @@ const config = defineConfig({
   plugins: [
     devtools(),
     tailwindcss(),
-    tanstackStart(),
+    tanstackStart({
+      // WHY: the SDKs that hold the SerpApi key, talk to LM Studio and load
+      //      the 5 MB tokenizer table must never reach the browser. On top
+      //      of the default `*.server.*` rule, a client import of them
+      //      fails the build (after tree-shaking) instead of shipping.
+      importProtection: {
+        client: { specifiers: [/^(serpapi|openai|js-tiktoken)(\/|$)/] },
+      },
+    }),
     // WHY: react's plugin MUST come after tanstackStart(), and nitro (the
     //      server runtime) comes last, the order TanStack Start's docs use.
     viteReact(),

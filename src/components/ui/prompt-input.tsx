@@ -153,7 +153,11 @@ function PromptInputTextarea({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // WHY: an IME (Japanese, Chinese, Korean) confirms a word with Enter.
+    //      Safari ends the composition first and marks that keydown with
+    //      keyCode 229 instead of `isComposing`.
+    const composing = e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229
+    if (e.key === "Enter" && !e.shiftKey && !composing) {
       e.preventDefault()
       onSubmit?.()
     }
@@ -167,7 +171,7 @@ function PromptInputTextarea({
       onChange={handleChange}
       onKeyDown={handleKeyDown}
       className={cn(
-        "min-h-[44px] w-full resize-none border-none bg-transparent text-foreground shadow-none outline-none focus-visible:ring-0 focus-visible:ring-offset-0",
+        "min-h-[44px] w-full resize-none border-none bg-transparent text-foreground shadow-none outline-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:bg-transparent",
         className
       )}
       rows={1}

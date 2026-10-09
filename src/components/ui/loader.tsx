@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 
 // Animated shimmer text used while the model is generating.
-// Other loader variants existed as shadcn references but were removed —
+// Other loader variants existed as shadcn references but were removed:
 // only this one is imported (by src/routes/index.tsx) and worth keeping.
 export function TextShimmerLoader({
   text = "Thinking",
