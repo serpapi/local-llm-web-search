@@ -10,9 +10,9 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Talks to a local model served by LM Studio through its OpenAI-compatible API at `http://localhost:1234/v1`.
 - Gives the model seven SerpApi tools: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, `google_flights_search`, `google_hotels_search`, and `google_shopping_search`.
 - Runs an agent loop: every call carries the tools, so the model can check an answer or fix a search that missed, for up to three rounds. After the third, the answer call sets `tool_choice: "none"`, as LM Studio's own `.act()` turns tools off in its last round, and tells the model it can't search again: LM Studio leaves the tool definitions out of that call's prompt.
-- Trims each SerpApi response on SerpApi's servers with the `json_restrictor` parameter, so the model only receives the fields it needs. The sidebar shows the raw and restricted sizes side by side.
+- Trims each SerpApi response on SerpApi's servers with the `json_restrictor` parameter, so the model only receives the fields it needs. The sidebar shows the raw and restricted sizes side by side, and counts every SerpApi search the chat has spent.
 - Lets you pick what the model reads as a tool result: SerpApi's JSON response, or its [Markdown output](https://serpapi.com/markdown-output) (`output=md`), with or without a restrictor.
-- Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then a token breakdown of the context window and the time each phase took.
+- Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then LM Studio's token count for the model's last call, split into its parts, and the time each phase took.
 - Lists every search result page the model used as a clickable source under the answer.
 - Validates tool arguments with Zod and returns errors that say what to do next.
 - Keeps the SerpApi key on the server. It never ships in a client bundle.
@@ -212,7 +212,9 @@ A raw SerpApi response runs from 3,000 to more than 50,000 tokens depending on t
 
 ### Why raw JSON stays out of the "Context used" total
 
-The model only receives the restricted response. The app fetches the full JSON only for the comparison view and counts it separately. Adding it to the total would be wrong, because the model never reads it.
+The model only receives the restricted response. The app fetches the full response only for the comparison view and counts it separately. Adding it to the total would be wrong, because the model never reads it.
+
+That comparison is usually one more SerpApi search per tool call: SerpApi serves a search from its cache only when every parameter matches a search from the last hour, and the comparison drops `json_restrictor`. The app runs it once per answer, and the sidebar counts it under "Full-response checks", next to the searches the model ran.
 
 ### How multi-turn chat fits the window
 
@@ -224,6 +226,10 @@ When the history and the new turn would pass about 70% of the loaded window, the
 
 The conversation lives on the server, not in the browser tab. A turn runs in the background while the page polls its progress, so reloading the page, closing the tab or an HMR update does not lose the question or the answer. An httpOnly cookie names the session. The server keeps up to 20 sessions in memory, each for a day after its last use, and restarting the server starts a fresh chat.
 
-### How accurate the token estimate is
+### Where the token numbers come from
 
-The sidebar estimates tokens with tiktoken's `cl100k_base`, because each model has its own tokenizer. Against LM Studio's exact prompt counts for Qwen, Gemma and GLM, the estimate is 3% to 28% low, from chat-template overhead and tokenizer differences. That gap is why history trimming starts at 70%, and why the big number carries a `~`. The `in / out` line under it is the model's own count for the final call. Its output side includes hidden reasoning tokens, so it can be much larger than the visible answer.
+"Context used" is LM Studio's own count for the turn's last call: the prompt it read and the output it wrote, from the model's tokenizer and chat template. Every chat completion returns it in `usage`, with the reasoning share in `completion_tokens_details.reasoning_tokens`. The output side includes that reasoning, so it can be much larger than the visible answer.
+
+A completion's `usage` reports totals, not parts. The parts under the total (tool definitions, system prompt, history, tool calls, tool results) are measured with tiktoken's `cl100k_base` and scaled so they add up to LM Studio's number. Unscaled, cl100k reads 3% to 28% low against the models' own counts, from chat-template overhead and tokenizer differences. The tool definitions alone measured 1,646 tokens with cl100k, 1,862 on Gemma 4 12B and 2,092 on Qwen 3.8 27B. That gap is also why history trimming, which runs before LM Studio has counted anything, starts at 70% of the window.
+
+A call with `tool_choice: "none"` reads no tool definitions, because LM Studio leaves them out of the prompt, so the breakdown leaves them out too. "This turn" adds up every call of the answer: each one reads the conversation again. "Next question starts at" is what the next question will carry, since search results are not kept between questions.

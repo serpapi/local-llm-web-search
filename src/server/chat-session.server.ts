@@ -9,12 +9,22 @@ import {
 } from "@tanstack/react-start/server"
 import { z } from "zod"
 
-import { historyMessageSchema, readQueryProgress, runAgentTurn } from "./agent"
+import {
+  fetchFullResponse,
+  historyMessageSchema,
+  readQueryProgress,
+  runAgentTurn,
+} from "./agent"
 import type { RunQueryInput, RunQueryResult } from "./agent"
 import type { ChatTurnInput } from "./chat"
-import type { QueryProgress } from "@/lib/agent-types"
+import type {
+  FullResponseResult,
+  QueryProgress,
+  ToolCallInfo,
+} from "@/lib/agent-types"
 import type {
   ChatMessage,
+  ChatSearches,
   ChatSession,
   ChatStatus,
   ChatTurnStats,
@@ -38,6 +48,13 @@ type SessionState = {
   last: ChatTurnStats | null
   // Turns trimmed out of `conversation` so far, summed over every turn.
   droppedTurns: number
+  // SerpApi searches spent in this chat, failed turns included.
+  searches: ChatSearches
+  // The last turn's full responses, fetched once (see `measureLastTurn`).
+  measured: {
+    turnId: string
+    results: Promise<Array<FullResponseResult>>
+  } | null
   pending: { progressId: string; startedAt: number } | null
   touchedAt: number
 }
@@ -90,6 +107,8 @@ export function newSession(): SessionState {
     conversation: [],
     last: null,
     droppedTurns: 0,
+    searches: { model: 0, compare: 0 },
+    measured: null,
     pending: null,
     touchedAt: Date.now(),
   }
@@ -159,7 +178,13 @@ export function snapshot(
       : null,
     last: s.last,
     turnsInMemory: s.conversation.filter((m) => m.role === "user").length,
+    searches: { ...s.searches },
   }
+}
+
+/** SerpApi searches a turn's tool calls spent. Exported for tests. */
+export function searchesIn(calls: Array<Pick<ToolCallInfo, "searches">>) {
+  return calls.reduce((sum, c) => sum + (c.searches ?? 1), 0)
 }
 
 export function status(s: SessionState): ChatStatus {
@@ -240,12 +265,15 @@ export async function runTurn(
         phases: result.phases,
       },
     ]
+    // A failed turn still spent the searches it ran before it failed.
+    s.searches.model += searchesIn(result.toolCalls)
     if (result.ok) {
       s.droppedTurns += result.trimmedTurns
       s.last = {
         turnId: progressId,
         breakdown: result.breakdown,
         exactUsage: result.exactUsage,
+        totalUsage: result.totalUsage,
         phases: result.phases,
         modelContext: {
           loaded: result.loadedContext ?? input.contextLength,
@@ -254,6 +282,7 @@ export async function runTurn(
         trimmedTurns: s.droppedTurns,
         conversationTokens: result.conversationTokens,
         toolCalls: result.toolCalls,
+        searches: searchesIn(result.toolCalls),
       }
     }
     // Unchanged on a failed turn, already trimmed on a good one.
@@ -285,4 +314,46 @@ export function sendMessage(input: ChatTurnInput): ChatSession {
   // Fire and forget: the request returns now, the turn keeps going.
   void runTurn(s, input)
   return snapshot(s)
+}
+
+/**
+ * The last turn's full, unrestricted SerpApi responses, for the restrictor
+ * card's before/after. Runs once per turn: each call is one more search,
+ * counted in `searches.compare`, and a second request for the same turn
+ * (another tab, a remount) gets the same results instead of searching
+ * again. Exported with an injectable fetch for tests.
+ */
+export function measureLastTurn(
+  s: SessionState,
+  turnId: string,
+  fetchFull: typeof fetchFullResponse = fetchFullResponse
+): Promise<Array<FullResponseResult>> {
+  if (s.measured?.turnId === turnId) return s.measured.results
+  const calls = s.last?.turnId === turnId ? s.last.toolCalls : null
+  if (!calls) {
+    return Promise.reject(new Error("That turn is no longer the latest one."))
+  }
+  // WHY: nothing to compare when a call ran without a restrictor, or when
+  //      Finance fell back to a web search: the unrestricted Finance call
+  //      would answer a different question. Spend no searches on it.
+  if (calls.some((c) => c.restrictor === null || (c.searches ?? 1) > 1)) {
+    return Promise.resolve([])
+  }
+  const results = Promise.all(
+    calls.map(async (c) => {
+      const full = await fetchFull({
+        name: c.name,
+        args: c.args,
+        output: c.output,
+      })
+      s.searches.compare += 1
+      return full
+    })
+  )
+  s.measured = { turnId, results }
+  // A failed measurement may run again.
+  results.catch(() => {
+    if (s.measured?.results === results) s.measured = null
+  })
+  return results
 }

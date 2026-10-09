@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 
 import type { FullResponseResult, ToolCallInfo } from "@/lib/agent-types"
-import type { ChatTurnStats } from "@/lib/chat"
-import { fetchFullResponse } from "@/server/agent"
+import type { ChatSession, ChatTurnStats } from "@/lib/chat"
+import { chatQueries, measureFullResponses } from "@/server/chat"
 
 // The full (unrestricted) SerpApi responses for the latest turn, shared by
 // the breakdown card's before/after and the inspect dialog's raw view.
@@ -40,7 +41,7 @@ function isFallbackResponse(call: ToolCallInfo): boolean {
 
 /**
  * Whether a turn that just ended gets its full responses fetched, at one
- * SerpApi credit per tool call: only when this page watched it run, it
+ * SerpApi search per tool call: only when this page watched it run, it
  * succeeded, and it was not measured yet. The server replaces `last` only
  * on success, so a failed turn comes back with the previous turn's id.
  */
@@ -69,6 +70,7 @@ export function shouldMeasureTurn({
  *      seen. Undo right after Clear still finds them here.
  */
 export function useFullResponses(toolCalls: Array<ToolCallInfo>) {
+  const queryClient = useQueryClient()
   const [fetched, setFetched] = useState<{
     key: string
     state: FullFetchState
@@ -101,14 +103,15 @@ export function useFullResponses(toolCalls: Array<ToolCallInfo>) {
     const settle = (state: FullFetchState) =>
       setFetched((prev) => (prev?.key === key ? { key, state } : prev))
     setFetched({ key, state: { status: "loading" } })
-    Promise.all(
-      calls.map((c) =>
-        fetchFullResponse({
-          data: { name: c.name, args: c.args, output: c.output },
-        })
-      )
-    )
-      .then((results) => settle({ status: "done", results }))
+    measureFullResponses({ data: { turnId: after.turnId } })
+      .then(({ results, searches }) => {
+        // The searches it spent show in the sidebar's count right away.
+        queryClient.setQueryData(
+          chatQueries.session().queryKey,
+          (old: ChatSession | undefined) => old && { ...old, searches }
+        )
+        settle(results.length > 0 ? { status: "done", results } : IDLE)
+      })
       .catch((err: unknown) =>
         settle({
           status: "error",

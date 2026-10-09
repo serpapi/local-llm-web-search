@@ -9,13 +9,15 @@ import { z } from "zod"
 
 import {
   currentSession,
+  measureLastTurn,
   replaceSession,
   sendMessage,
   snapshot,
   status,
   switchSession,
 } from "./chat-session.server"
-import type { ChatSession, ChatStatus } from "@/lib/chat"
+import type { ChatSearches, ChatSession, ChatStatus } from "@/lib/chat"
+import type { FullResponseResult } from "@/lib/agent-types"
 import { TOOL_OUTPUTS } from "@/lib/agent-types"
 
 export const chatTurnInput = z.object({
@@ -64,6 +66,26 @@ export const restoreChatSession = createServerFn({ method: "POST" })
   .handler(({ data }): ChatSession => {
     return snapshot(switchSession(data.id))
   })
+
+/**
+ * The last turn's full SerpApi responses, for the restrictor card's
+ * before/after. One search per tool call, once per turn; returns the
+ * chat's updated search count with them.
+ */
+export const measureFullResponses = createServerFn({ method: "POST" })
+  .validator(z.object({ turnId: z.string().min(1).max(100) }))
+  .handler(
+    async ({
+      data,
+    }): Promise<{
+      results: Array<FullResponseResult>
+      searches: ChatSearches
+    }> => {
+      const s = currentSession()
+      const results = await measureLastTurn(s, data.turnId)
+      return { results, searches: { ...s.searches } }
+    }
+  )
 
 // The page reads the session through TanStack Query. The route loader fills
 // the cache, the mutations write the session each server function returns,

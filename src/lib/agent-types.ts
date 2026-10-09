@@ -126,6 +126,9 @@ export type ToolCallInfo = {
   // Which search round of the turn ran this call, from 1. Calls in the same
   // round ran in parallel. Missing on turns saved before it existed.
   round?: number
+  // SerpApi searches this call made: 2 when a Finance call found no quote
+  // and fell back to a web search, else 1.
+  searches?: number
 }
 
 export type Source = {
@@ -142,6 +145,9 @@ export type ExactUsage = {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  // The part of `completionTokens` the model spent reasoning, when LM Studio
+  // reports it (`completion_tokens_details.reasoning_tokens`).
+  reasoningTokens?: number
 }
 
 /**
@@ -192,7 +198,8 @@ export const CONTEXT_SEGMENTS: Array<{
   {
     key: "tool_definitions",
     label: "Tool definitions",
-    description: "JSON schema for the SerpApi tools, sent on every call.",
+    description:
+      "JSON schema for the SerpApi tools. LM Studio leaves it out of a call that can't search.",
   },
   {
     key: "system_prompt",
@@ -219,13 +226,12 @@ export const CONTEXT_SEGMENTS: Array<{
   {
     key: "tool_result",
     label: "Tool result",
-    description:
-      "SerpApi response (server-side restricted) fed back to the model.",
+    description: "SerpApi results fed back to the model, after the restrictor.",
   },
   {
     key: "final_response",
     label: "Final response",
-    description: "The model's final answer to you.",
+    description: "What the model wrote on this call, reasoning included.",
   },
 ]
 
@@ -235,4 +241,51 @@ export const CONTEXT_SEGMENTS: Array<{
  */
 export function contextTotal(breakdown: Breakdown): number {
   return CONTEXT_SEGMENTS.reduce((sum, seg) => sum + breakdown[seg.key], 0)
+}
+
+// Everything the model reads, as opposed to what it writes.
+const INPUT_SEGMENTS = CONTEXT_SEGMENTS.filter(
+  (seg) => seg.key !== "final_response"
+)
+
+/**
+ * Fit an estimated breakdown to LM Studio's exact count for the same call:
+ * the input segments are scaled to add up to `promptTokens`, and the reply
+ * becomes `completionTokens`. Returns the ratio applied, for other
+ * estimates on the same ruler.
+ *
+ * WHY: the segments are counted with one generic tokenizer (cl100k), while
+ *      LM Studio reports only totals, from the model's own tokenizer and
+ *      chat template. Those land 4 to 27% above cl100k (Gemma 4 12B and
+ *      Qwen 3.8 27B, 2026-10-09), so unscaled segments never add up to the
+ *      number LM Studio reports. Scaling keeps each segment's share.
+ */
+export function fitBreakdown(
+  estimate: Breakdown,
+  exact: ExactUsage
+): { breakdown: Breakdown; ratio: number } {
+  const fitted: Breakdown = {
+    ...estimate,
+    final_response: exact.completionTokens,
+  }
+  const inputEstimate = INPUT_SEGMENTS.reduce(
+    (sum, seg) => sum + estimate[seg.key],
+    0
+  )
+  if (inputEstimate === 0) return { breakdown: fitted, ratio: 1 }
+  const ratio = exact.promptTokens / inputEstimate
+  // Largest remainder: round down, then hand the leftover tokens to the
+  // segments that lost the most, so the parts sum to the exact total.
+  const parts = INPUT_SEGMENTS.map((seg) => {
+    const value = estimate[seg.key] * ratio
+    return { key: seg.key, count: Math.floor(value), rest: value % 1 }
+  })
+  let leftover = exact.promptTokens - parts.reduce((sum, p) => sum + p.count, 0)
+  for (const p of [...parts].sort((a, b) => b.rest - a.rest)) {
+    if (leftover <= 0) break
+    p.count += 1
+    leftover -= 1
+  }
+  for (const p of parts) fitted[p.key] = p.count
+  return { breakdown: fitted, ratio }
 }

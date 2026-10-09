@@ -1,14 +1,25 @@
+import { createElement } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, renderHook, waitFor } from "@testing-library/react"
 
 import { shouldMeasureTurn, useFullResponses } from "../use-full-responses"
 
+import type { ReactNode } from "react"
 import type { ToolCallInfo } from "@/lib/agent-types"
-import type { ChatTurnStats } from "@/lib/chat"
+import type { ChatSession, ChatTurnStats } from "@/lib/chat"
 
-// Every call here would spend a SerpApi credit for real.
-const fetchFullResponse = vi.hoisted(() => vi.fn())
-vi.mock("@/server/agent", () => ({ fetchFullResponse }))
+// Every call here would spend SerpApi searches for real.
+const measureFullResponses = vi.hoisted(() => vi.fn())
+const SESSION_KEY = ["chat", "session"]
+vi.mock("@/server/chat", () => ({
+  measureFullResponses,
+  chatQueries: { session: () => ({ queryKey: SESSION_KEY }) },
+}))
+
+let queryClient: QueryClient
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(QueryClientProvider, { client: queryClient }, children)
 
 const call = (query: string): ToolCallInfo => ({
   name: "google_search",
@@ -32,6 +43,7 @@ const stats = (calls: Array<ToolCallInfo>, turnId: string): ChatTurnStats => ({
     final_response: 1,
   },
   exactUsage: null,
+  totalUsage: null,
   phases: {
     firstInferenceMs: 900,
     toolExecutionMs: 800,
@@ -41,6 +53,7 @@ const stats = (calls: Array<ToolCallInfo>, turnId: string): ChatTurnStats => ({
   trimmedTurns: 0,
   conversationTokens: 500,
   toolCalls: calls,
+  searches: calls.length,
 })
 
 // The server sends a fresh copy of the session each time, so a turn that
@@ -115,26 +128,40 @@ describe("shouldMeasureTurn", () => {
 })
 
 describe("useFullResponses", () => {
+  const full = {
+    response: { organic_results: [] },
+    tokens: 4000,
+    serpApiMs: 1500,
+  }
   beforeEach(() => {
-    fetchFullResponse.mockReset()
-    fetchFullResponse.mockResolvedValue({
-      response: { organic_results: [] },
-      tokens: 4000,
-      serpApiMs: 1500,
+    queryClient = new QueryClient()
+    measureFullResponses.mockReset()
+    measureFullResponses.mockResolvedValue({
+      results: [full, full],
+      searches: { model: 2, compare: 2 },
     })
   })
 
-  it("fetches each call of a new successful turn once", async () => {
+  it("measures a new successful turn once and shows its searches", async () => {
+    queryClient.setQueryData(SESSION_KEY, {
+      searches: { model: 2, compare: 0 },
+    } as ChatSession)
     const before = stats([call("bitcoin")], "turn-700")
     const after = stats([call("paris"), call("rome")], "turn-950")
     const { result, rerender } = renderHook(
       ({ calls }) => useFullResponses(calls),
-      { initialProps: { calls: before.toolCalls } }
+      { initialProps: { calls: before.toolCalls }, wrapper }
     )
     act(() => result.current.measureTurn({ before, after, watched: true }))
     rerender({ calls: after.toolCalls })
     await waitFor(() => expect(result.current.fullFetch.status).toBe("done"))
-    expect(fetchFullResponse).toHaveBeenCalledTimes(2)
+    expect(measureFullResponses).toHaveBeenCalledTimes(1)
+    expect(measureFullResponses).toHaveBeenCalledWith({
+      data: { turnId: "turn-950" },
+    })
+    expect(
+      queryClient.getQueryData<ChatSession>(SESSION_KEY)?.searches
+    ).toEqual({ model: 2, compare: 2 })
 
     // The same turn seen again, by a second poll or after Undo.
     act(() =>
@@ -144,32 +171,38 @@ describe("useFullResponses", () => {
         watched: true,
       })
     )
-    expect(fetchFullResponse).toHaveBeenCalledTimes(2)
+    expect(measureFullResponses).toHaveBeenCalledTimes(1)
   })
 
   it("does not refetch the previous turn when a turn fails", () => {
     const before = stats([call("bitcoin")], "turn-700")
-    const { result } = renderHook(() => useFullResponses(before.toolCalls))
+    const { result } = renderHook(() => useFullResponses(before.toolCalls), {
+      wrapper,
+    })
     act(() =>
       result.current.measureTurn({ before, after: copy(before), watched: true })
     )
-    expect(fetchFullResponse).not.toHaveBeenCalled()
+    expect(measureFullResponses).not.toHaveBeenCalled()
     expect(result.current.fullFetch.status).toBe("idle")
   })
 
   it("does not fetch a turn the page did not watch", () => {
     const after = stats([call("paris")], "turn-950")
-    const { result } = renderHook(() => useFullResponses(after.toolCalls))
+    const { result } = renderHook(() => useFullResponses(after.toolCalls), {
+      wrapper,
+    })
     act(() =>
       result.current.measureTurn({ before: null, after, watched: false })
     )
-    expect(fetchFullResponse).not.toHaveBeenCalled()
+    expect(measureFullResponses).not.toHaveBeenCalled()
   })
 
   it("keeps the error message when the fetch fails", async () => {
-    fetchFullResponse.mockRejectedValue(new Error("Invalid API key."))
+    measureFullResponses.mockRejectedValue(new Error("Invalid API key."))
     const after = stats([call("paris")], "turn-950")
-    const { result } = renderHook(() => useFullResponses(after.toolCalls))
+    const { result } = renderHook(() => useFullResponses(after.toolCalls), {
+      wrapper,
+    })
     act(() =>
       result.current.measureTurn({ before: null, after, watched: true })
     )

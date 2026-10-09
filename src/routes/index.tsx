@@ -22,9 +22,11 @@ import {
 } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import type { ReactNode } from "react"
 
 import type {
   ChatMessage,
+  ChatSearches,
   ChatSession,
   ModelContextSnapshot,
   ToolCallSummary,
@@ -90,6 +92,7 @@ import {
   TOOL_OUTPUTS,
   TOOL_OUTPUT_META,
   contextTotal,
+  fitBreakdown,
   isToolOutput,
 } from "@/lib/agent-types"
 import { listModels } from "@/server/agent"
@@ -365,10 +368,13 @@ function App() {
           <BreakdownPanel
             breakdown={last?.breakdown ?? null}
             exactUsage={last?.exactUsage ?? null}
+            totalUsage={last?.totalUsage ?? null}
             phases={last?.phases ?? null}
             modelContext={last?.modelContext ?? null}
             conversationTokens={last?.conversationTokens ?? 0}
             toolCalls={latestToolCalls}
+            searches={session.searches}
+            lastTurnSearches={last?.searches ?? null}
             fullFetch={fullFetch}
             onInspectRaw={
               latestToolCalls.length > 0
@@ -927,41 +933,56 @@ function SourcesList({ sources }: { sources: Array<Source> }) {
 function BreakdownPanel({
   breakdown,
   exactUsage,
+  totalUsage,
   phases,
   modelContext,
   conversationTokens,
   toolCalls,
+  searches,
+  lastTurnSearches,
   fullFetch,
   onInspectRaw,
 }: {
   breakdown: Breakdown | null
   exactUsage: ExactUsage | null
+  totalUsage: TurnUsage | null
   phases: Phases | null
   modelContext: ModelContextSnapshot | null
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
+  searches: ChatSearches
+  lastTurnSearches: number | null
   fullFetch: FullFetchState
   onInspectRaw?: () => void
 }) {
+  const searchCard =
+    searches.model + searches.compare > 0 ? (
+      <SearchesCard searches={searches} lastTurn={lastTurnSearches} />
+    ) : null
   return (
     <Card className="flex flex-col lg:h-full lg:min-h-0">
       <CardHeader className="shrink-0 pb-3">
         <CardTitle>Token breakdown</CardTitle>
         <CardDescription>
-          How full the model's context is right now.
+          What the model read and wrote on its last call.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {breakdown === null ? (
-          <EmptyBreakdown />
+          <>
+            <EmptyBreakdown />
+            {searchCard}
+          </>
         ) : (
           <BreakdownBody
             breakdown={breakdown}
             exactUsage={exactUsage}
+            totalUsage={totalUsage}
             phases={phases}
             modelContext={modelContext}
             conversationTokens={conversationTokens}
             toolCalls={toolCalls}
+            searchCard={searchCard}
             fullFetch={fullFetch}
             onInspectRaw={onInspectRaw}
           />
@@ -970,6 +991,8 @@ function BreakdownPanel({
     </Card>
   )
 }
+
+type TurnUsage = ExactUsage & { completions: number }
 
 function EmptyBreakdown() {
   return (
@@ -985,30 +1008,39 @@ function EmptyBreakdown() {
 function BreakdownBody({
   breakdown,
   exactUsage,
+  totalUsage,
   phases,
   modelContext,
   conversationTokens,
   toolCalls,
+  searchCard,
   fullFetch,
   onInspectRaw,
 }: {
   breakdown: Breakdown
   exactUsage: ExactUsage | null
+  totalUsage: TurnUsage | null
   phases: Phases | null
   modelContext: ModelContextSnapshot | null
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
+  searchCard: ReactNode
   fullFetch: FullFetchState
   onInspectRaw?: () => void
 }) {
-  const estimate = contextTotal(breakdown)
+  // WHY: the segments are estimates and LM Studio's count is exact, so the
+  //      segments are fitted to it: they keep their shares and add up to
+  //      the number LM Studio reported. Without usage they stay estimates.
+  const fit = exactUsage ? fitBreakdown(breakdown, exactUsage) : null
+  const shown = fit?.breakdown ?? breakdown
+  const total = contextTotal(shown)
 
   // Rank segments by size so the compact list leads with the biggest movers.
   const orderedSegments = [...CONTEXT_SEGMENTS]
     .map((seg) => ({
       ...seg,
-      count: breakdown[seg.key],
-      pct: estimate > 0 ? breakdown[seg.key] / estimate : 0,
+      count: shown[seg.key],
+      pct: total > 0 ? shown[seg.key] / total : 0,
       color: SEGMENT_COLORS[seg.key],
     }))
     .sort((a, b) => b.count - a.count)
@@ -1016,19 +1048,18 @@ function BreakdownBody({
   return (
     <div className="flex flex-col gap-5">
       <HeroTotal
-        conversationTokens={conversationTokens}
-        lastTurnTotal={estimate}
+        total={total}
         exactUsage={exactUsage}
         modelContext={modelContext}
       />
-      <StackedBar segments={orderedSegments} total={estimate} />
+      <StackedBar segments={orderedSegments} total={total} />
       <SegmentList segments={orderedSegments} />
-      {phases ? (
-        <LatencyCard
-          phases={phases}
-          completionTokens={exactUsage?.completionTokens ?? null}
-        />
-      ) : null}
+      <TurnSummary
+        totalUsage={totalUsage}
+        nextQuestionTokens={Math.round(conversationTokens * (fit?.ratio ?? 1))}
+      />
+      {searchCard}
+      {phases ? <LatencyCard phases={phases} /> : null}
       {toolCalls.length > 0 ? (
         <JsonRestrictorCard
           toolCalls={toolCalls}
@@ -1041,37 +1072,37 @@ function BreakdownBody({
 }
 
 function HeroTotal({
-  conversationTokens,
-  lastTurnTotal,
+  total,
   exactUsage,
   modelContext,
 }: {
-  conversationTokens: number
-  lastTurnTotal: number
+  total: number
   exactUsage: ExactUsage | null
   modelContext: ModelContextSnapshot | null
 }) {
   const budget = modelContext?.loaded ?? null
-  const pctUsed = budget && budget > 0 ? (conversationTokens / budget) * 100 : 0
+  const pctUsed = budget && budget > 0 ? (total / budget) * 100 : 0
   const pctLabel =
     budget && pctUsed > 0 && pctUsed < 1 ? "<1%" : `${Math.round(pctUsed)}%`
   const maxLabel =
     modelContext && modelContext.max !== modelContext.loaded
       ? `model max ${modelContext.max.toLocaleString()}`
       : null
+  const reasoning = exactUsage?.reasoningTokens ?? 0
 
   return (
     <div className="flex flex-col gap-2">
       <span
         className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
-        title="Tokens the conversation carries into the next turn, estimated with the cl100k tokenizer. Local models typically count 10-30% higher. Tool payloads are dropped from memory after each turn."
+        title="Everything the model read and wrote on the last call of this turn, as LM Studio counted it with the model's own tokenizer and chat template. The segments below share that total in proportion to estimates from a generic tokenizer."
       >
         Context used
       </span>
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-3xl font-semibold tabular-nums">
-            ~{conversationTokens.toLocaleString()}
+            {exactUsage ? "" : "~"}
+            {total.toLocaleString()}
           </span>
           {budget != null ? (
             <span className="font-mono text-base text-muted-foreground tabular-nums">
@@ -1095,20 +1126,116 @@ function HeroTotal({
           />
         </div>
       ) : null}
-      <div className="flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
+      <div className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground tabular-nums">
         <span
           title={
             exactUsage
-              ? "Ground truth from LM Studio for this turn's final inference call. The tool-picking call is counted separately, and the output includes any hidden reasoning tokens."
-              : "Estimated with the cl100k tokenizer."
+              ? "LM Studio's count for the last call. The output includes the tokens the model spent reasoning."
+              : "LM Studio sent no usage for this call, so the total is estimated with the cl100k tokenizer."
           }
         >
           {exactUsage
-            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out · final call`
-            : `~${lastTurnTotal.toLocaleString()} tokens this turn`}
+            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out${
+                reasoning > 0
+                  ? ` (${reasoning.toLocaleString()} reasoning)`
+                  : ""
+              }`
+            : "estimated"}
         </span>
         {maxLabel ? <span>{maxLabel}</span> : null}
       </div>
+    </div>
+  )
+}
+
+// The rest of the turn: what every call read, and what the next question
+// starts from. Explains why the context grows so little between questions.
+function TurnSummary({
+  totalUsage,
+  nextQuestionTokens,
+}: {
+  totalUsage: TurnUsage | null
+  nextQuestionTokens: number
+}) {
+  return (
+    <ul className="flex flex-col gap-1 font-mono text-[11px] text-muted-foreground tabular-nums">
+      {totalUsage && totalUsage.completions > 1 ? (
+        <li
+          className="flex justify-between gap-2"
+          title="Every call LM Studio ran for this answer. Each call reads the whole conversation so far again, so a turn reads much more than its last call."
+        >
+          <span>This turn, {totalUsage.completions} calls</span>
+          <span>
+            {totalUsage.promptTokens.toLocaleString()} in ·{" "}
+            {totalUsage.completionTokens.toLocaleString()} out
+          </span>
+        </li>
+      ) : null}
+      <li
+        className="flex justify-between gap-2"
+        title="Tool definitions, system prompt and history: what the next question starts from. Search results are not kept between questions, only the questions and answers."
+      >
+        <span>Next question starts at</span>
+        <span>~{nextQuestionTokens.toLocaleString()}</span>
+      </li>
+    </ul>
+  )
+}
+
+// What this chat has spent on SerpApi, so a model that searches three
+// times is visible. The full-response checks are the searches the
+// restrictor card re-runs without the restrictor to measure the saving.
+function SearchesCard({
+  searches,
+  lastTurn,
+}: {
+  searches: ChatSearches
+  lastTurn: number | null
+}) {
+  const rows: Array<{ label: string; value: number | null; title: string }> = [
+    {
+      label: "Last answer",
+      value: lastTurn,
+      title: "Searches the model ran for the last answer.",
+    },
+    {
+      label: "By the model",
+      value: searches.model,
+      title:
+        "Every search the model ran in this chat, failed answers included.",
+    },
+    {
+      label: "Full-response checks",
+      value: searches.compare,
+      title:
+        "Each search re-run once without the restrictor, to measure what the restrictor saved.",
+    },
+  ]
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <span
+          className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
+          title="Each search costs one SerpApi credit, unless SerpApi serves it from its one-hour cache."
+        >
+          SerpApi searches
+        </span>
+        <span className="font-mono text-xs tabular-nums">
+          {(searches.model + searches.compare).toLocaleString()} this chat
+        </span>
+      </div>
+      <ul className="flex flex-col gap-1 text-[11px]">
+        {rows.map((row) => (
+          <li
+            key={row.label}
+            title={row.title}
+            className="flex items-center justify-between gap-2"
+          >
+            <span className="text-muted-foreground">{row.label}</span>
+            <span className="font-mono tabular-nums">{row.value ?? "–"}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -1176,53 +1303,36 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
   )
 }
 
-function LatencyCard({
-  phases,
-  completionTokens,
-}: {
-  phases: Phases
-  completionTokens: number | null
-}) {
+function LatencyCard({ phases }: { phases: Phases }) {
   // WHY: with no tool call there is no second inference. The first call
   //      IS the answer, so labelling it "Pick tool" would be wrong.
   const directAnswer =
     phases.toolExecutionMs === 0 && phases.secondInferenceMs === 0
-  const segments: Array<{
-    key: keyof Phases
-    label: string
-    color: string
-  }> = [
-    {
-      key: "firstInferenceMs",
-      label: directAnswer ? "Answer" : "Pick tool",
-      color: "bg-serpapi-blue",
-    },
-    {
-      key: "toolExecutionMs",
-      label: "SerpApi",
-      color: "bg-serpapi-purple",
-    },
-    {
-      key: "secondInferenceMs",
-      label: "Answer",
-      color: "bg-serpapi-violet",
-    },
-  ]
+  // NOTE: no tokens/sec here. It divided the last call's output by the
+  //       time of every call after the first search, retries included, and
+  //       without streaming the app can't separate the time LM Studio spends
+  //       reading the prompt from the time it spends writing.
+  const segments = (
+    [
+      {
+        key: "firstInferenceMs",
+        label: directAnswer ? "Answer" : "Pick tool",
+        color: "bg-serpapi-blue",
+      },
+      {
+        key: "toolExecutionMs",
+        label: "SerpApi",
+        color: "bg-serpapi-purple",
+      },
+      {
+        key: "secondInferenceMs",
+        label: "Answer",
+        color: "bg-serpapi-violet",
+      },
+    ] as const
+  ).filter((s) => phases[s.key] > 0)
   const total = segments.reduce((sum, s) => sum + phases[s.key], 0)
   if (total === 0) return null
-
-  // Tokens/sec on the answer call. Uses exactUsage.completionTokens (from
-  // LM Studio) divided by the phase that actually generated the answer,
-  // the second call after tools, or the first (and only) call on a direct
-  // answer. Gives a practical "how fast is this machine running this
-  // model" number either way.
-  const answerMs = directAnswer
-    ? phases.firstInferenceMs
-    : phases.secondInferenceMs
-  const tokPerSec =
-    completionTokens != null && answerMs > 0
-      ? Math.round(completionTokens / (answerMs / 1000))
-      : null
 
   return (
     <div className="flex flex-col gap-2">
@@ -1232,26 +1342,17 @@ function LatencyCard({
         </span>
         <span className="font-mono text-xs tabular-nums">
           {(total / 1000).toFixed(2)}s
-          {tokPerSec != null ? (
-            <span className="ml-1.5 text-muted-foreground">
-              · {tokPerSec} tok/s
-            </span>
-          ) : null}
         </span>
       </div>
       <div className="flex h-2 overflow-hidden rounded-full bg-muted">
-        {segments.map((s) => {
-          const ms = phases[s.key]
-          if (ms === 0) return null
-          return (
-            <div
-              key={s.key}
-              className={`${s.color} transition-[width] duration-500 ease-out`}
-              style={{ width: `${(ms / total) * 100}%` }}
-              title={`${s.label}: ${ms}ms`}
-            />
-          )
-        })}
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            className={`${s.color} transition-[width] duration-500 ease-out`}
+            style={{ width: `${(phases[s.key] / total) * 100}%` }}
+            title={`${s.label}: ${phases[s.key]}ms`}
+          />
+        ))}
       </div>
       <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
         {segments.map((s) => (

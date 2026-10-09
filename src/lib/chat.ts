@@ -37,6 +37,15 @@ export type ModelContextSnapshot = {
   max: number
 }
 
+// SerpApi searches a chat has spent, for the sidebar. `model` counts the
+// searches the model asked for, `compare` the extra ones that measure the
+// full, unrestricted response. Each costs a SerpApi credit unless SerpApi
+// serves it from its one-hour cache.
+export type ChatSearches = {
+  model: number
+  compare: number
+}
+
 // The sidebar's numbers, from the last turn that succeeded. A failed turn
 // leaves them as they were, so the context never looks wiped when it wasn't.
 export type ChatTurnStats = {
@@ -44,11 +53,15 @@ export type ChatTurnStats = {
   turnId: string
   breakdown: Breakdown
   exactUsage: ExactUsage | null
+  // Every completion of the turn summed, or null if one lacked usage.
+  totalUsage: (ExactUsage & { completions: number }) | null
   phases: Phases
   modelContext: ModelContextSnapshot
   trimmedTurns: number
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
+  // SerpApi searches the model's tool calls spent this turn.
+  searches: number
 }
 
 export type ChatPending = {
@@ -63,6 +76,7 @@ export type ChatSession = {
   last: ChatTurnStats | null
   // User turns the model still remembers after history trimming.
   turnsInMemory: number
+  searches: ChatSearches
 }
 
 // What the page polls while a turn runs: small on purpose, because the full

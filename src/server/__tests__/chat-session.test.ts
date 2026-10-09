@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest"
 
 import {
   evictSessions,
+  measureLastTurn,
   newSession,
   runTurn,
+  searchesIn,
   snapshot,
 } from "../chat-session.server"
 import type { RunQueryInput, RunQueryResult } from "../agent"
 import type { ChatTurnInput } from "../chat"
+import type { ToolCallInfo } from "@/lib/agent-types"
 
 const input: ChatTurnInput = {
   question: "What is 2+2?",
@@ -163,5 +166,85 @@ describe("evictSessions", () => {
     ])
     evictSessions(map, now, 2)
     expect([...map.keys()].sort()).toEqual(["new", "running"])
+  })
+})
+
+const search = (over: Partial<ToolCallInfo> = {}): ToolCallInfo => ({
+  name: "google_search",
+  args: { query: "SerpApi pricing" },
+  restrictor: "organic_results[0:5].{title,link}",
+  output: "markdown",
+  response: "## Organic Results",
+  tokens: 200,
+  serpApiMs: 900,
+  round: 1,
+  searches: 1,
+  ...over,
+})
+
+describe("SerpApi search count", () => {
+  it("counts a Finance fallback as two searches", () => {
+    expect(searchesIn([search(), search({ searches: 2 }), {}])).toBe(4)
+  })
+
+  it("adds every turn's searches to the chat, failed turns included", async () => {
+    const s = newSession()
+    await runTurn(s, input, () =>
+      Promise.resolve(ok({ toolCalls: [search(), search({ round: 2 })] }))
+    )
+    expect(s.last?.searches).toBe(2)
+    await runTurn(s, input, () =>
+      Promise.resolve(
+        ok({ ok: false, answer: "**Error:** parse", toolCalls: [search()] })
+      )
+    )
+    expect(snapshot(s, noProgress).searches).toEqual({ model: 3, compare: 0 })
+    // The sidebar keeps the last good turn's count.
+    expect(s.last?.searches).toBe(2)
+  })
+})
+
+describe("measureLastTurn", () => {
+  const full = {
+    response: "## Organic Results\n...",
+    tokens: 9000,
+    serpApiMs: 1200,
+  }
+
+  async function sessionWith(calls: Array<ToolCallInfo>) {
+    const s = newSession()
+    await runTurn(s, input, () => Promise.resolve(ok({ toolCalls: calls })))
+    return s
+  }
+
+  it("runs each call once and counts the searches", async () => {
+    const s = await sessionWith([search(), search()])
+    let fetched = 0
+    const fetchFull = () => {
+      fetched++
+      return Promise.resolve(full)
+    }
+    const turnId = s.last?.turnId ?? ""
+    await expect(measureLastTurn(s, turnId, fetchFull)).resolves.toHaveLength(2)
+    // A second request for the same turn spends nothing.
+    await measureLastTurn(s, turnId, fetchFull)
+    expect(fetched).toBe(2)
+    expect(s.searches).toEqual({ model: 2, compare: 2 })
+  })
+
+  it("spends nothing on a turn it can't compare", async () => {
+    const s = await sessionWith([search({ restrictor: null })])
+    const fetchFull = () => Promise.reject(new Error("must not run"))
+    await expect(
+      measureLastTurn(s, s.last?.turnId ?? "", fetchFull)
+    ).resolves.toEqual([])
+    expect(s.searches.compare).toBe(0)
+  })
+
+  it("refuses a turn that is no longer the latest", async () => {
+    const s = await sessionWith([search()])
+    await expect(
+      measureLastTurn(s, "turn-gone", () => Promise.resolve(full))
+    ).rejects.toThrow(/no longer the latest/)
   })
 })

@@ -28,6 +28,7 @@ import {
   splitMarkdownFrontMatter,
   stripInlineToolCalls,
   sumUsage,
+  toExactUsage,
   toolParams,
   trimHistoryToFit,
   uniqueInstances,
@@ -1179,6 +1180,38 @@ describe("buildSystemPrompt", () => {
     const prompt = buildSystemPrompt()
     expect(prompt).not.toContain("cannot search again")
     expect(prompt).toContain("you may search again with a better query")
+  })
+})
+
+describe("toExactUsage / sumUsage with reasoning", () => {
+  const call = (prompt: number, out: number, reasoning?: number) => ({
+    prompt_tokens: prompt,
+    completion_tokens: out,
+    total_tokens: prompt + out,
+    ...(reasoning === undefined
+      ? {}
+      : { completion_tokens_details: { reasoning_tokens: reasoning } }),
+  })
+
+  it("keeps the reasoning tokens LM Studio reports", () => {
+    expect(toExactUsage(call(1008, 60, 57))).toEqual({
+      promptTokens: 1008,
+      completionTokens: 60,
+      totalTokens: 1068,
+      reasoningTokens: 57,
+    })
+    expect(toExactUsage(call(1008, 60))).not.toHaveProperty("reasoningTokens")
+  })
+
+  it("sums reasoning only when every call reported it", () => {
+    expect(sumUsage([call(10, 5, 3), call(20, 6, 4)])).toMatchObject({
+      completionTokens: 11,
+      reasoningTokens: 7,
+      completions: 2,
+    })
+    expect(sumUsage([call(10, 5, 3), call(20, 6)])).not.toHaveProperty(
+      "reasoningTokens"
+    )
   })
 })
 

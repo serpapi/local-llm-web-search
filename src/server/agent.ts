@@ -1116,21 +1116,47 @@ export function isEmptyFinanceResponse(response: SerpApiJson): boolean {
  * because a benchmark reader would take the smaller number at face value.
  */
 export function sumUsage(
-  usages: Array<
-    | { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-    | null
-    | undefined
-  >
+  usages: Array<LmStudioUsage | null | undefined>
 ): (ExactUsage & { completions: number }) | null {
   if (usages.length === 0) return null
   const acc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  let reasoning: number | undefined = 0
   for (const u of usages) {
     if (!u) return null
     acc.promptTokens += u.prompt_tokens
     acc.completionTokens += u.completion_tokens
     acc.totalTokens += u.total_tokens
+    const r = u.completion_tokens_details?.reasoning_tokens
+    // One call without the figure makes the sum unknown, not smaller.
+    reasoning =
+      reasoning === undefined || typeof r !== "number"
+        ? undefined
+        : reasoning + r
   }
-  return { ...acc, completions: usages.length }
+  return {
+    ...acc,
+    ...(reasoning === undefined ? {} : { reasoningTokens: reasoning }),
+    completions: usages.length,
+  }
+}
+
+/** The `usage` block of an LM Studio chat completion. */
+type LmStudioUsage = {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  completion_tokens_details?: { reasoning_tokens?: number } | null
+}
+
+/** One completion's usage in the app's shape. Exported for tests. */
+export function toExactUsage(usage: LmStudioUsage): ExactUsage {
+  const reasoning = usage.completion_tokens_details?.reasoning_tokens
+  return {
+    promptTokens: usage.prompt_tokens,
+    completionTokens: usage.completion_tokens,
+    totalTokens: usage.total_tokens,
+    ...(typeof reasoning === "number" ? { reasoningTokens: reasoning } : {}),
+  }
 }
 
 export type RunQueryResult = {
@@ -2182,12 +2208,6 @@ export const readQueryProgress = createServerOnlyFn(
     queryProgress.get(progressId) ?? null
 )
 
-const fullResponseInput = z.object({
-  name: z.string().min(1),
-  args: z.record(z.string(), z.unknown()).default({}),
-  output: z.enum(TOOL_OUTPUTS).default("json"),
-})
-
 // WHY: sliding window: keep the system prompt + tools intact and drop
 //      the oldest turns when the conversation won't fit in
 //      `contextBudget × ratio`. The 30% headroom covers two things: the
@@ -2288,15 +2308,19 @@ export function trimHistoryToFit(
 /**
  * Re-run a tool call WITHOUT its restrictor and return the full,
  * untrimmed SerpApi response with its token count and fetch time. Backs
- * the optional "compare the full response" view, which shows how much
- * the restrictor saved, in tokens and in latency, against a live,
- * same-session measurement. The chat loop never calls this; it's a
- * demo-only fetch the user opts into.
+ * the restrictor card's before/after, which shows how much the restrictor
+ * saved, in tokens and in latency.
+ *
+ * Each call is one more SerpApi search: the cache only serves a search
+ * whose parameters all match, and this one drops `json_restrictor`. The
+ * chat session runs it once per turn and counts it with the turn's own
+ * searches (`chat-session.server.ts`).
  */
-export const fetchFullResponse = createServerFn({ method: "POST" })
-  .validator(fullResponseInput)
-  .handler(async ({ data }): Promise<FullResponseResult> => {
-    const { name, args, output } = data
+export const fetchFullResponse = createServerOnlyFn(
+  async (
+    call: Pick<ToolCallInfo, "name" | "args" | "output">
+  ): Promise<FullResponseResult> => {
+    const { name, args, output } = call
     if (!isRestrictorTool(name)) {
       throw new ToolArgError(
         `Unknown tool: ${name}`,
@@ -2311,7 +2335,8 @@ export const fetchFullResponse = createServerFn({ method: "POST" })
       tokens: countTokens(payload),
       serpApiMs: Math.round(performance.now() - start),
     }
-  })
+  }
+)
 
 // Tool rounds one turn may run. No benchmark turn has needed more than 2
 // (docs/agent-loop.md), so 3 leaves headroom without letting a model loop.
@@ -2585,7 +2610,9 @@ export const runAgentTurn = createServerOnlyFn(
       const breakdown: Breakdown = {
         tool_definitions: toolsTokens,
         system_prompt: systemTokens,
-        conversation_history: countTokens(trimmedHistory),
+        // An empty history would count as "[]", one token.
+        conversation_history:
+          trimmedHistory.length > 0 ? countTokens(trimmedHistory) : 0,
         user_message: questionTokens,
         tool_call: 0,
         tool_result: 0,
@@ -2641,6 +2668,10 @@ export const runAgentTurn = createServerOnlyFn(
       // The model's last raw reply, kept so a failed turn can show what
       // the model actually wrote instead of a generic error.
       let lastRaw = ""
+      // What the turn's last call carried, for its breakdown: the tool
+      // definitions unless it couldn't search, plus any note added to it.
+      let finalCallSentTools = true
+      let finalCallNote = ""
       // One entry per executed call: the SERP link captured from
       // `search_metadata` before it was stripped from the model's view.
       const toolSearchUrls: Array<string | null> = []
@@ -2743,6 +2774,8 @@ export const runAgentTurn = createServerOnlyFn(
               // produced `response`. It changes if the Finance fallback
               // below pivots the call to google_search.
               let restrictor = restrictorFor(call.name, toolOutput)
+              // SerpApi searches this call spends: 2 with the fallback below.
+              let searches = 1
               const execStart = performance.now()
               let { payload: response, searchUrl } = await executeTool(
                 call.name,
@@ -2770,6 +2803,7 @@ export const runAgentTurn = createServerOnlyFn(
                     toolOutput
                   )
                   execMs += performance.now() - fbStart
+                  searches = 2
                   restrictor = restrictorFor("google_search", toolOutput)
                   searchUrl = fallback.searchUrl
                   const note = `Google Finance had no direct quote for "${query}". These are web search results instead.`
@@ -2791,6 +2825,7 @@ export const runAgentTurn = createServerOnlyFn(
                 restrictor,
                 execMs,
                 searchUrl,
+                searches,
               }
             })
           )
@@ -2809,6 +2844,7 @@ export const runAgentTurn = createServerOnlyFn(
               tokens: responseTokens,
               serpApiMs: Math.round(r.execMs),
               round,
+              searches: r.searches,
             })
             toolSearchUrls.push(r.searchUrl)
             breakdown.tool_call += countTokens(r.call.rawArgs)
@@ -2848,10 +2884,13 @@ export const runAgentTurn = createServerOnlyFn(
         //      search into `tool_calls` instead of leaving it in the text.
         //      Temperature goes up a bit, since most of these calls write
         //      the answer.
+        // Set inside `complete`, which TypeScript can't follow: no narrowing.
+        let lastToolChoice = "auto" as "auto" | "none"
         const loop = await runToolLoop({
           maxToolRounds: MAX_TOOL_ROUNDS,
           complete: async (toolChoice) => {
             setProgress(progressId, "answer")
+            lastToolChoice = toolChoice
             const t = performance.now()
             let reply: typeof first
             try {
@@ -2897,6 +2936,10 @@ export const runAgentTurn = createServerOnlyFn(
             ),
         })
         rounds = loop.rounds
+        if (lastToolChoice === "none") {
+          finalCallSentTools = false
+          finalCallNote = FINAL_ROUND_NOTE
+        }
         lastRaw = loop.last.choices[0].message.content ?? ""
         cutOff = loop.last.choices[0].finish_reason === "length"
         answer = stripInlineToolCalls(lastRaw)
@@ -2912,6 +2955,8 @@ export const runAgentTurn = createServerOnlyFn(
             JSON.stringify(lastRaw)
           )
           retried = true
+          finalCallSentTools = false
+          finalCallNote = ANSWER_NUDGE
           const retryMessages: Array<ChatCompletionMessageParam> = [
             ...messages,
             { role: "system", content: ANSWER_NUDGE },
@@ -2965,6 +3010,10 @@ export const runAgentTurn = createServerOnlyFn(
         })
       }
 
+      // The breakdown describes the turn's last call: no tool definitions
+      // when it couldn't search, and the note it carried, if any.
+      if (!finalCallSentTools) breakdown.tool_definitions = 0
+      if (finalCallNote) breakdown.system_prompt += countTokens(finalCallNote)
       breakdown.final_response = countTokens(answer)
       // WHY: one source entry per tool call that returned a SerpApi
       //      URL, labelled so you can tell parallel calls apart in the
@@ -2982,11 +3031,7 @@ export const runAgentTurn = createServerOnlyFn(
       const sources = extractSources(answer, toolSources)
       const elapsedMs = Math.round(performance.now() - start)
       const exactUsage: ExactUsage | null = finalUsage
-        ? {
-            promptTokens: finalUsage.prompt_tokens,
-            completionTokens: finalUsage.completion_tokens,
-            totalTokens: finalUsage.total_tokens,
-          }
+        ? toExactUsage(finalUsage)
         : null
       const totalUsage = sumUsage(usages)
 

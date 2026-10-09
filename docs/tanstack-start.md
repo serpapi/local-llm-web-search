@@ -56,23 +56,23 @@ Server state lives in the Query cache. The query factories sit next to the serve
 
 ### Server functions
 
-| Function             | File                  | Method | Input                    | Middleware |
-| -------------------- | --------------------- | ------ | ------------------------ | ---------- |
-| `listModels`         | `src/server/agent.ts` | GET    | none                     | none       |
-| `fetchFullResponse`  | `src/server/agent.ts` | POST   | `fullResponseInput`      | none       |
-| `getChatSession`     | `src/server/chat.ts`  | GET    | none                     | none       |
-| `getChatStatus`      | `src/server/chat.ts`  | GET    | none                     | none       |
-| `sendChatMessage`    | `src/server/chat.ts`  | POST   | `chatTurnInput`          | none       |
-| `clearChatSession`   | `src/server/chat.ts`  | POST   | none                     | none       |
-| `restoreChatSession` | `src/server/chat.ts`  | POST   | `{ id }` (UUID)          | none       |
-| `listBenchRuns`      | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
-| `getBenchJob`        | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
-| `saveBenchRun`       | `src/server/bench.ts` | POST   | `saveInput`              | `devOnly`  |
-| `startBenchJob`      | `src/server/bench.ts` | POST   | `startJobInput`          | `devOnly`  |
-| `queueBenchJobs`     | `src/server/bench.ts` | POST   | array of `startJobInput` | `devOnly`  |
-| `stopBenchJob`       | `src/server/bench.ts` | POST   | none                     | `devOnly`  |
+| Function               | File                  | Method | Input                    | Middleware |
+| ---------------------- | --------------------- | ------ | ------------------------ | ---------- |
+| `listModels`           | `src/server/agent.ts` | GET    | none                     | none       |
+| `getChatSession`       | `src/server/chat.ts`  | GET    | none                     | none       |
+| `getChatStatus`        | `src/server/chat.ts`  | GET    | none                     | none       |
+| `sendChatMessage`      | `src/server/chat.ts`  | POST   | `chatTurnInput`          | none       |
+| `clearChatSession`     | `src/server/chat.ts`  | POST   | none                     | none       |
+| `restoreChatSession`   | `src/server/chat.ts`  | POST   | `{ id }` (UUID)          | none       |
+| `measureFullResponses` | `src/server/chat.ts`  | POST   | `{ turnId }`             | none       |
+| `listBenchRuns`        | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
+| `getBenchJob`          | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
+| `saveBenchRun`         | `src/server/bench.ts` | POST   | `saveInput`              | `devOnly`  |
+| `startBenchJob`        | `src/server/bench.ts` | POST   | `startJobInput`          | `devOnly`  |
+| `queueBenchJobs`       | `src/server/bench.ts` | POST   | array of `startJobInput` | `devOnly`  |
+| `stopBenchJob`         | `src/server/bench.ts` | POST   | none                     | `devOnly`  |
 
-Every input is a Zod 4 schema passed straight to `.validator()`. GET serves reads; POST serves writes and `fetchFullResponse`, which spends SerpApi credits. The chat and bench handlers call `chat-session.server.ts` and `bench-job.server.ts` through static imports, which the client build drops along with the handlers it replaces by RPC stubs.
+Every input is a Zod 4 schema passed straight to `.validator()`. GET serves reads; POST serves writes and `measureFullResponses`, which spends SerpApi searches. The chat and bench handlers call `chat-session.server.ts` and `bench-job.server.ts` through static imports, which the client build drops along with the handlers it replaces by RPC stubs.
 
 `devOnly` is function middleware whose `.server()` throws unless `import.meta.env.DEV`. The app has no `src/start.ts`, so Start installs its CSRF middleware for server functions.
 
