@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "SerpApi real-time web data plugged into a local LLM via function calling. TanStack Start + React 19 + shadcn/ui.",
   "author": "Tomás Murúa",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "repository": {
