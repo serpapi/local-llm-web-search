@@ -29,7 +29,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       meta: [
         { charSet: "utf-8" },
         { name: "viewport", content: "width=device-width, initial-scale=1" },
-        { title: "SerpApi × Local LLM" },
+        { title: "SerpApi Local Agent Lab" },
         {
           name: "description",
           content:
@@ -47,7 +47,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           content: "#252525",
         },
         { property: "og:type", content: "website" },
-        { property: "og:title", content: "SerpApi × Local LLM" },
+        { property: "og:title", content: "SerpApi Local Agent Lab" },
         {
           property: "og:description",
           content:

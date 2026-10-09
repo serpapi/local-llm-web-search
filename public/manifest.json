@@ -1,6 +1,7 @@
 {
-  "name": "Local LLM + SerpApi Web Search",
-  "short_name": "LLM Web Search",
+  "name": "SerpApi Local Agent Lab",
+  "short_name": "Agent Lab",
+  "description": "Test local LLM agents against SerpApi's real-time search APIs.",
   "icons": [
     {
       "src": "/serpapi-logo.svg",

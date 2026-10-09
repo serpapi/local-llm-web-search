@@ -119,7 +119,7 @@ export const Route = createFileRoute("/")({
     ])
     return models
   },
-  head: () => ({ meta: [{ title: "SerpApi × Local LLM" }] }),
+  head: () => ({ meta: [{ title: "SerpApi Local Agent Lab" }] }),
   // WHY: the HTML carries the chat session the cookie names, so no cache
   //      may keep it or hand it to another browser.
   headers: () => ({ "Cache-Control": "private, no-store" }),
@@ -399,7 +399,7 @@ function Header({
         />
         <div className="flex flex-col">
           <h1 className="text-2xl font-semibold tracking-tight">
-            SerpApi × Local LLM
+            SerpApi Local Agent Lab
           </h1>
           <p className="text-sm text-muted-foreground">
             Local inference by{" "}

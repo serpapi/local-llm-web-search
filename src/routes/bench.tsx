@@ -71,7 +71,7 @@ export const Route = createFileRoute("/bench")({
     return modelsResult
   },
   head: () => ({
-    meta: [{ title: "Output benchmark · SerpApi × Local LLM" }],
+    meta: [{ title: "Output benchmark · SerpApi Local Agent Lab" }],
   }),
   pendingComponent: PagePending,
   component: BenchPage,
