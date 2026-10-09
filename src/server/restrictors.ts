@@ -166,16 +166,21 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
  * rating for hotels, the old price and condition for products.
  */
 export const MARKDOWN_RESTRICTORS: Record<RestrictorTool, string> = {
-  // Organic results are the noisy branch for entity questions (they sank
-  // the Apple CEO query), so they drop to 3 and give their budget to the
-  // AI Overview and related questions, where Google puts direct answers.
+  // Organic results lead, five of them, as in JSON mode. When Google has no
+  // AI Overview, answer box or knowledge graph for a question, the answer
+  // has to come from the organic results or the related questions. With 3
+  // organic results, listed after the related questions, Qwen 3.8, Gemma 4
+  // and Bonsai each ran out of search rounds on at least one question about
+  // SerpApi's CEO, founding year or prices (2026-10-09). Two more results
+  // still leave Search under the JSON count: with 3 it measured 220 to 264
+  // tokens, against about 850 in JSON.
   google_search: [
+    "organic_results[0:5].{title,link,snippet,date}",
     "answer_box.{answer,snippet,title,list}",
     "ai_overview.text_blocks[0:8].{snippet,list[0:6].{title,snippet}}",
-    "related_questions[0:4].{question,snippet,date}",
     "knowledge_graph.{title,type,description,source.{name,link}}",
     "top_stories[0:3].{title,link,source,date}",
-    "organic_results[0:3].{title,link,snippet,date}",
+    "related_questions[0:3].{question,snippet}",
     "error",
     "search_metadata.google_url",
   ].join(","),
