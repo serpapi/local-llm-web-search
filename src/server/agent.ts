@@ -32,6 +32,8 @@ import type {
   ToolOutput,
 } from "@/lib/agent-types"
 import type {
+  ChatCompletion,
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions"
@@ -229,6 +231,15 @@ export function promptOverBudget(
 }
 
 /**
+ * True when LM Studio refused a reply it could not parse into the model's
+ * tool-call format ("does not match the expected peg-native format").
+ * Exported for tests.
+ */
+export function isUnparseableReply(message: string): boolean {
+  return /does not match the expected .*format/i.test(message)
+}
+
+/**
  * What to tell the user when an answer call fails, from LM Studio's error
  * text. Exported for tests.
  */
@@ -242,7 +253,7 @@ export function answerCallHint(
   if (size) {
     return `The tool results are larger than the ${Number(size[1]).toLocaleString("en-US")}-token context. Use a restricted output, or load the model with a bigger context.`
   }
-  if (/does not match the expected .*format/i.test(message)) {
+  if (isUnparseableReply(message)) {
     return "The model wrote output LM Studio could not parse. Try again, or pick a different model."
   }
   if (/LM Link/i.test(message)) {
@@ -2306,6 +2317,46 @@ export const fetchFullResponse = createServerFn({ method: "POST" })
 // (docs/agent-loop.md), so 3 leaves headroom without letting a model loop.
 const MAX_TOOL_ROUNDS = 3
 
+// WHY: sent with the call that follows the last round. That call sets
+//      `tool_choice: "none"`, and LM Studio then leaves the tool
+//      definitions out of the prompt (measured on Gemma 4 12B and Qwen 3.8
+//      27B, 2026-10-09). With no word about it, Qwen 3.8 and Bonsai 27B
+//      wrote yet another search as text, and the turn ended with no answer.
+const FINAL_ROUND_NOTE = `You have used all ${MAX_TOOL_ROUNDS} search rounds, so you can't search again. Answer now from the search results above. If they don't contain the answer, say what you could not find.`
+
+// Appended for the one retry after an answer call that wrote no answer.
+const ANSWER_NUDGE =
+  "The tool call is complete. Now write the final answer in prose using only the data already returned by the tool. Do NOT emit any more tool calls."
+
+/**
+ * What the chat shows when a turn ends without an answer, from the model's
+ * last raw reply. Exported for tests.
+ *
+ * WHY: the usual cause is a model that still wanted to search, writing the
+ *      call as text where no search could run. Saying so, with the search
+ *      it asked for, tells the user more than "empty response" did.
+ */
+export function missingAnswerNotice(
+  lastRaw: string,
+  rounds: number,
+  cutOff: boolean
+): string {
+  const wanted = parseInlineToolCalls(lastRaw).at(0)
+  if (wanted) {
+    const query =
+      typeof wanted.args.query === "string" ? ` ("${wanted.args.query}")` : ""
+    const limit =
+      rounds >= MAX_TOOL_ROUNDS
+        ? `used all ${MAX_TOOL_ROUNDS} search rounds and `
+        : ""
+    return `The model ${limit}asked for another search${query} instead of answering, so the results so far didn't have what it needed. Try a more specific question, or another model.`
+  }
+  if (cutOff) {
+    return `The model used its whole ${MAX_COMPLETION_TOKENS.toLocaleString("en-US")}-token reply budget without writing an answer. Try again, or pick another model.`
+  }
+  return "The model returned an empty response after the tool call. Try rephrasing, or pick a different model."
+}
+
 /**
  * The agent loop after the first tool round: ask the model again with the
  * tools still available, run the searches it asks for, and repeat until it
@@ -2483,6 +2534,28 @@ export const runAgentTurn = createServerOnlyFn(
       })
       const systemPrompt = buildSystemPrompt()
 
+      // WHY: LM Studio rejects a reply it can't parse into the model's
+      //      tool-call format ("does not match the expected peg-native
+      //      format"). It's a sampling slip: Muse Glimmer lost three answers
+      //      this way in one chat on 2026-10-09, and the same question went
+      //      through when asked again. One more try costs less than a
+      //      failed turn.
+      const createCompletion = async (
+        params: ChatCompletionCreateParamsNonStreaming
+      ): Promise<ChatCompletion> => {
+        try {
+          return await client.chat.completions.create(params)
+        } catch (err) {
+          const m = err instanceof Error ? err.message : String(err)
+          if (!isUnparseableReply(m)) throw err
+          devWarn(
+            "[runQuery] LM Studio could not parse the reply, asking again:",
+            m
+          )
+          return await client.chat.completions.create(params)
+        }
+      }
+
       // WHY: static overhead = system prompt + tool definitions + the
       //      current user message + a rough budget for the answer you
       //      haven't generated yet. Budget falls back to a conservative
@@ -2526,9 +2599,9 @@ export const runAgentTurn = createServerOnlyFn(
       //      deterministic. Keep the creativity for the answer call.
       setProgress(progressId, "think")
       const t0 = performance.now()
-      let first: Awaited<ReturnType<typeof client.chat.completions.create>>
+      let first: ChatCompletion
       try {
-        first = await client.chat.completions.create({
+        first = await createCompletion({
           model,
           messages,
           tools: TOOLS,
@@ -2646,7 +2719,10 @@ export const runAgentTurn = createServerOnlyFn(
         )
         // Execute one round of tool calls and append the assistant turn and
         // the tool results to `messages`. Runs once per round of the loop.
+        let roundNo = 0
         const runToolRound = async (calls: Array<ResolvedCall>) => {
+          roundNo += 1
+          const round = roundNo
           // NOTE: the phase timer wraps the whole batch. Parallel calls
           //       overlap, so summing per-call durations would report more
           //       time than actually passed. Each call's own duration still
@@ -2732,6 +2808,7 @@ export const runAgentTurn = createServerOnlyFn(
               response: r.response,
               tokens: responseTokens,
               serpApiMs: Math.round(r.execMs),
+              round,
             })
             toolSearchUrls.push(r.searchUrl)
             breakdown.tool_call += countTokens(r.call.rawArgs)
@@ -2778,9 +2855,15 @@ export const runAgentTurn = createServerOnlyFn(
             const t = performance.now()
             let reply: typeof first
             try {
-              reply = await client.chat.completions.create({
+              reply = await createCompletion({
                 model,
-                messages,
+                messages:
+                  toolChoice === "none"
+                    ? [
+                        ...messages,
+                        { role: "system", content: FINAL_ROUND_NOTE },
+                      ]
+                    : messages,
                 tools: TOOLS,
                 tool_choice: toolChoice,
                 temperature: 0.3,
@@ -2831,14 +2914,10 @@ export const runAgentTurn = createServerOnlyFn(
           retried = true
           const retryMessages: Array<ChatCompletionMessageParam> = [
             ...messages,
-            {
-              role: "system",
-              content:
-                "The tool call is complete. Now write the final answer in prose using only the data already returned by the tool. Do NOT emit any more tool calls.",
-            },
+            { role: "system", content: ANSWER_NUDGE },
           ]
           const retryStart = performance.now()
-          const retry = await client.chat.completions.create({
+          const retry = await createCompletion({
             model,
             messages: retryMessages,
             temperature: 0.3,
@@ -2871,8 +2950,7 @@ export const runAgentTurn = createServerOnlyFn(
       //      blank message.
       const answerMissing = answer.length === 0
       if (answerMissing) {
-        answer =
-          "The model returned an empty response after the tool call. Try rephrasing, or pick a different model."
+        answer = missingAnswerNotice(lastRaw, rounds, cutOff)
       }
 
       // WHY: push the final assistant answer onto the conversation so

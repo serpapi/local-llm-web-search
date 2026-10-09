@@ -9,7 +9,7 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Runs a chat UI built on TanStack Start and shadcn/ui, with model output typeset by shadcn/typeset.
 - Talks to a local model served by LM Studio through its OpenAI-compatible API at `http://localhost:1234/v1`.
 - Gives the model seven SerpApi tools: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, `google_flights_search`, `google_hotels_search`, and `google_shopping_search`.
-- Runs an agent loop: every call carries the tools, so the model can check an answer or fix a search that missed, for up to three rounds. After the third, the answer call sets `tool_choice: "none"`, as LM Studio's own `.act()` turns tools off in its last round.
+- Runs an agent loop: every call carries the tools, so the model can check an answer or fix a search that missed, for up to three rounds. After the third, the answer call sets `tool_choice: "none"`, as LM Studio's own `.act()` turns tools off in its last round, and tells the model it can't search again: LM Studio leaves the tool definitions out of that call's prompt.
 - Trims each SerpApi response on SerpApi's servers with the `json_restrictor` parameter, so the model only receives the fields it needs. The sidebar shows the raw and restricted sizes side by side.
 - Lets you pick what the model reads as a tool result: SerpApi's JSON response, or its [Markdown output](https://serpapi.com/markdown-output) (`output=md`), with or without a restrictor.
 - Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then a token breakdown of the context window and the time each phase took.

@@ -123,6 +123,9 @@ export type ToolCallInfo = {
   tokens: number
   // How long this call's SerpApi fetch took, for the optional compare view.
   serpApiMs: number
+  // Which search round of the turn ran this call, from 1. Calls in the same
+  // round ran in parallel. Missing on turns saved before it existed.
+  round?: number
 }
 
 export type Source = {

@@ -229,7 +229,11 @@ export async function runTurn(
         // WHY: on a failed turn `toolCalls` is an empty array, which would
         //      render a misleading "Direct answer" badge under the error.
         toolCalls: result.ok
-          ? result.toolCalls.map(({ name, args }) => ({ name, args }))
+          ? result.toolCalls.map(({ name, args, round }) => ({
+              name,
+              args,
+              round,
+            }))
           : undefined,
         sources: result.sources,
         elapsedMs: result.elapsedMs,

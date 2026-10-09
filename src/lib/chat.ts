@@ -14,7 +14,7 @@ import type {
 // What a message needs to show its tool badges. The full responses stay on
 // `ChatTurnStats.toolCalls`, for the last turn only: kept on every message
 // they would grow the session by up to 60k tokens a turn.
-export type ToolCallSummary = Pick<ToolCallInfo, "name" | "args">
+export type ToolCallSummary = Pick<ToolCallInfo, "name" | "args" | "round">
 
 export type ChatMessage = {
   id: string

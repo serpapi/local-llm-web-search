@@ -11,6 +11,8 @@ import {
   hasInlineToolCall,
   isEmptyFinanceResponse,
   isTransientSerpApiError,
+  isUnparseableReply,
+  missingAnswerNotice,
   normalizeCountryCode,
   parseInlineToolCalls,
   parseLmStudioModels,
@@ -1177,5 +1179,45 @@ describe("buildSystemPrompt", () => {
     const prompt = buildSystemPrompt()
     expect(prompt).not.toContain("cannot search again")
     expect(prompt).toContain("you may search again with a better query")
+  })
+})
+
+describe("isUnparseableReply", () => {
+  it("matches LM Studio's parse failure, not other errors", () => {
+    expect(
+      isUnparseableReply(
+        '400 "Engine protocol predict stream returned an error: {"code":500,"message":"The model produced output that does not match the expected peg-native format"}"'
+      )
+    ).toBe(true)
+    expect(isUnparseableReply("Request timed out.")).toBe(false)
+  })
+})
+
+describe("missingAnswerNotice", () => {
+  // What Qwen 3.8 27B wrote on the forced-answer call, 2026-10-09.
+  const qwen =
+    "\n\n<tool_call>\n<function=google_search>\n<parameter=query>\nSerpApi pricing plans 2026\n</parameter>\n</function>\n</tool_call>"
+
+  it("names the search the model still wanted after the last round", () => {
+    expect(missingAnswerNotice(qwen, 3, false)).toBe(
+      'The model used all 3 search rounds and asked for another search ("SerpApi pricing plans 2026") instead of answering, so the results so far didn\'t have what it needed. Try a more specific question, or another model.'
+    )
+  })
+
+  it("reads Gemma 4's own call format too", () => {
+    const gemma =
+      '<|tool_call>call:google_search{query:<|"|>when was SerpApi founded<|"|>}<tool_call|>'
+    expect(missingAnswerNotice(gemma, 1, false)).toContain(
+      'asked for another search ("when was SerpApi founded")'
+    )
+    expect(missingAnswerNotice(gemma, 1, false)).not.toContain("rounds")
+  })
+
+  it("explains a reply cut off by the token budget", () => {
+    expect(missingAnswerNotice("", 1, true)).toMatch(/reply budget/)
+  })
+
+  it("falls back to the generic notice", () => {
+    expect(missingAnswerNotice("", 1, false)).toMatch(/empty response/)
   })
 })

@@ -844,10 +844,15 @@ function ToolCallsPanel({ toolCalls }: { toolCalls: Array<ToolCallSummary> }) {
       </Badge>
     )
   }
+  // Calls in one round ran in parallel; a later round searched again after
+  // reading the results.
+  const rounds = Math.max(...toolCalls.map((c) => c.round ?? 1))
   const heading =
     toolCalls.length === 1 ? null : (
       <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {toolCalls.length} parallel tool calls
+        {rounds > 1
+          ? `${toolCalls.length} tool calls in ${rounds} rounds`
+          : `${toolCalls.length} parallel tool calls`}
       </span>
     )
   return (
