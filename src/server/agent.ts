@@ -2349,6 +2349,27 @@ const MAX_TOOL_ROUNDS = 3
 //      wrote yet another search as text, and the turn ended with no answer.
 const FINAL_ROUND_NOTE = `You have used all ${MAX_TOOL_ROUNDS} search rounds, so you can't search again. Answer now from the search results above. If they don't contain the answer, say what you could not find.`
 
+// Stands in for the answer in the history of a turn that ended without one.
+const NO_ANSWER_REPLY = "I couldn't find the answer in my searches."
+
+/**
+ * What the next question carries from this turn: everything but the system
+ * prompt, or, when the turn ended without an answer, its question and
+ * `NO_ANSWER_REPLY`. `historyLength` counts the history messages before the
+ * question. Exported for tests.
+ */
+export function historyAfterTurn(
+  messages: Array<ChatCompletionMessageParam>,
+  historyLength: number,
+  answered: boolean
+): Array<ChatCompletionMessageParam> {
+  if (answered) return messages.slice(1)
+  return [
+    ...messages.slice(1, historyLength + 2),
+    { role: "assistant", content: NO_ANSWER_REPLY },
+  ]
+}
+
 // Closes the question in the one retry after an answer call that wrote no
 // answer, below the turn's search results.
 const ANSWER_NUDGE =
@@ -3101,9 +3122,16 @@ export const runAgentTurn = createServerOnlyFn(
       // NOTE: "conversation so far": what the next call will carry
       //       before you append the next user message. Mirrors LM
       //       Studio's own conversation-tokens counter.
-      // WHY: a turn with no answer stays out of history, like a failed
-      //      turn. Kept, the fallback text read as the model's own answer.
-      const nextHistory = answerMissing ? castedHistory : messages.slice(1)
+      // WHY: a turn with no answer keeps its question, with a short reply
+      //      in place of the answer. Kept whole, the notice read as the
+      //      model's own answer. Dropped, a follow-up lost its subject:
+      //      after two such turns, Bonsai 27B asked which product "Can you
+      //      check their prices please" meant (2026-10-12).
+      const nextHistory = historyAfterTurn(
+        messages,
+        trimmedHistory.length,
+        !answerMissing
+      )
       const conversationTokens =
         toolsTokens +
         systemTokens +

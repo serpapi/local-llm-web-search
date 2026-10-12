@@ -10,6 +10,7 @@ import {
   contextOverride,
   extractSources,
   hasInlineToolCall,
+  historyAfterTurn,
   isEmptyFinanceResponse,
   isTransientSerpApiError,
   isUnparseableReply,
@@ -1314,5 +1315,39 @@ describe("answerFromResultsMessages", () => {
     expect(text).toContain("Founded in 2017.")
     expect(text).toContain('{"summary":{"price":1}}')
     expect(text.endsWith("say what you could not find.")).toBe(true)
+  })
+})
+
+describe("historyAfterTurn", () => {
+  const messages: Array<ChatCompletionMessageParam> = [
+    { role: "system", content: "system prompt" },
+    { role: "user", content: "Who runs SerpApi?" },
+    { role: "assistant", content: "Julien Khaleghy." },
+    { role: "user", content: "Can you check their prices please" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "google_search", arguments: "{}" },
+        },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "results" },
+    { role: "assistant", content: "Starter is $25 a month." },
+  ]
+
+  it("keeps the whole turn when it answered", () => {
+    expect(historyAfterTurn(messages, 2, true)).toEqual(messages.slice(1))
+  })
+
+  it("keeps the question of a turn that ended without an answer", () => {
+    const out = historyAfterTurn(messages.slice(0, 6), 2, false)
+    expect(out.slice(0, 3)).toEqual(messages.slice(1, 4))
+    expect(out).toHaveLength(4)
+    expect(out[3].role).toBe("assistant")
+    expect(out[3].content).toMatch(/couldn't find the answer/)
   })
 })
