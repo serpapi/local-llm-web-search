@@ -1377,10 +1377,9 @@ export function redactSecrets(text: string): string {
     )
 }
 
-// NOTE: matches the shape of `measurements/benchmark_log.json` from the
-//       Python experiment so the analysis scripts you already have work
-//       against both versions. The new fields (timestamp, exact_usage,
-//       sources_count, phases) are additive.
+// NOTE: the shape of an entry in `measurements/benchmark_log.json`. The
+//       later fields (timestamp, exact_usage, sources_count, phases) were
+//       added without changing the earlier ones, so old logs still read.
 type BenchmarkEntry = {
   timestamp: string
   query: string
@@ -1407,15 +1406,16 @@ type BenchmarkEntry = {
 const BENCHMARK_LOG_PATH = "measurements/benchmark_log.json"
 
 /**
- * Append-only log for local benchmarking. Read-modify-write so the
- * format matches the Python experiment's log; you can run the same
- * analysis scripts against either version.
+ * Append-only query log for local measurement, kept as one JSON array.
+ * Development only: a production server has no reason to keep a record of
+ * the questions it was asked.
  *
  * WHY: writes are chained, because a chat turn and a benchmark cell can
  *      finish together and the second write would drop the first entry.
  *      A logging failure must never break the user-facing query.
  */
 function appendBenchmarkLog(entry: BenchmarkEntry): Promise<void> {
+  if (!import.meta.env.DEV) return Promise.resolve()
   const write = lifecycle.logWrite.then(() => writeBenchmarkLog(entry))
   lifecycle.logWrite = write
   return write

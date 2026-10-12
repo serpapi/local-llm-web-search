@@ -43,7 +43,7 @@ Run before committing: `bun run typecheck`, `bun run lint`, `bun run test`. Ther
 | `src/components/bench/*`            | Payload tier table, end-to-end matrix with per-mode summary, cell inspector sheet, saved-runs panel, header.                                                                                                                          |
 | `src/components/ui/markdown.tsx`    | `react-markdown` wrapped in `typeset` with a preset (`typeset-chat` default, `typeset-compact` for dense views). Fenced code renders through Shiki and opts out with `not-typeset`.                                                   |
 | `bench/results/*.json`              | Saved benchmark runs, written by `/bench`. Gitignored: every machine and model produces its own numbers, so none ship with the repo.                                                                                                  |
-| `measurements/benchmark_log.json`   | Append-only log of every chat query. Gitignored.                                                                                                                                                                                      |
+| `measurements/benchmark_log.json`   | Append-only log of every chat query, written in development only. Gitignored.                                                                                                                                                         |
 
 ## Rules that matter here
 

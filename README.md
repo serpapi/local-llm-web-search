@@ -171,7 +171,7 @@ Badges on a cell:
 ```bash
 bun run dev         # start the dev server on :3005
 bun run build       # production build
-bun run start       # serve the production build (reads .env)
+bun run start       # serve the production build at http://127.0.0.1:3000 (reads .env)
 bun run typecheck   # tsc --noEmit
 bun run lint        # eslint
 bun run test        # vitest run (unit tests)
@@ -199,7 +199,7 @@ There is no CI. Run `bun run typecheck`, `bun run lint` and `bun run test` befor
 
 ## Security
 
-Only `src/server/agent.ts` reads `SERPAPI_API_KEY`, and only in code that runs on the server. Routes never import it. They call server functions in `chat.ts`, `bench.ts` and `models.ts`, which the client build replaces with RPC stubs. `agent.ts` imports `@tanstack/react-start/server-only`, so the build fails if a route or component imports it, or if the SerpApi SDK would reach the browser. The app never logs the key. The query log in `measurements/benchmark_log.json` removes likely secrets before it saves a query.
+Only `src/server/agent.ts` reads `SERPAPI_API_KEY`, and only in code that runs on the server. Routes never import it. They call server functions in `chat.ts`, `bench.ts` and `models.ts`, which the client build replaces with RPC stubs. `agent.ts` imports `@tanstack/react-start/server-only`, so the build fails if a route or component imports it, or if the SerpApi SDK would reach the browser. The app never logs the key. In development, the query log in `measurements/benchmark_log.json` removes likely secrets before it saves a query; a production build keeps no log. `bun run start` listens on 127.0.0.1 only. Set `NITRO_HOST` to serve other machines, and keep in mind that anyone who reaches the app spends your SerpApi searches.
 
 ## Notes
 

@@ -14,7 +14,7 @@
     "dev": "vite dev --port 3005",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node --env-file-if-exists=.env .output/server/index.mjs",
+    "start": "HOST=127.0.0.1 node --env-file-if-exists=.env .output/server/index.mjs",
     "test": "vitest run",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx}\"",
