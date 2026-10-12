@@ -2761,9 +2761,11 @@ export const runAgentTurn = async (
     // the model actually wrote instead of a generic error.
     let lastRaw = ""
     // What the turn's last call carried, for its breakdown: the tool
-    // definitions unless it couldn't search, plus any note added to it.
+    // definitions unless it couldn't search, the final-round note if it
+    // had one, or the plain-text form of `answerFromResultsMessages`.
     let finalCallSentTools = true
     let finalCallNote = ""
+    let finalCallPlainText = false
     // One entry per executed call: the SERP link captured from
     // `search_metadata` before it was stripped from the model's view.
     const toolSearchUrls: Array<string | null> = []
@@ -3060,10 +3062,9 @@ export const runAgentTurn = async (
           ),
       })
       rounds = loop.rounds
-      if (lastCall !== "auto") {
-        finalCallSentTools = false
-        finalCallNote = lastCall === "none" ? FINAL_ROUND_NOTE : ANSWER_NUDGE
-      }
+      if (lastCall !== "auto") finalCallSentTools = false
+      if (lastCall === "none") finalCallNote = FINAL_ROUND_NOTE
+      if (lastCall === "fallback") finalCallPlainText = true
       lastRaw = loop.last.choices[0].message.content ?? ""
       cutOff = loop.last.choices[0].finish_reason === "length"
       answer = stripInlineToolCalls(lastRaw)
@@ -3084,7 +3085,8 @@ export const runAgentTurn = async (
         )
         retried = true
         finalCallSentTools = false
-        finalCallNote = ANSWER_NUDGE
+        finalCallNote = ""
+        finalCallPlainText = true
         const retryMessages = answerFromResultsMessages(messages, toolCalls)
         const retryStart = performance.now()
         const retry = await createCompletion({
@@ -3136,9 +3138,15 @@ export const runAgentTurn = async (
     }
 
     // The breakdown describes the turn's last call: no tool definitions
-    // when it couldn't search, and the note it carried, if any.
+    // when it couldn't search, and the note it carried, if any. The
+    // plain-text call has no tool-call messages, and its closing
+    // instruction is part of the question.
     if (!finalCallSentTools) breakdown.tool_definitions = 0
     if (finalCallNote) breakdown.system_prompt += countTokens(finalCallNote)
+    if (finalCallPlainText) {
+      breakdown.tool_call = 0
+      breakdown.user_message += countTokens(ANSWER_NUDGE)
+    }
     breakdown.final_response = countTokens(answer)
     // WHY: one source entry per tool call that returned a SerpApi
     //      URL, labelled so you can tell parallel calls apart in the
