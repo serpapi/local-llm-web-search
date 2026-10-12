@@ -9,6 +9,7 @@ import {
   FlaskConical,
   Loader2,
   Moon,
+  Scale,
   Send,
   Sparkles,
   Sun,
@@ -199,7 +200,10 @@ function App() {
   // The sidebar shows the last turn that succeeded; a failed turn leaves
   // its numbers as they were.
   const latestToolCalls = last?.toolCalls ?? NO_TOOL_CALLS
-  const { fullFetch, measureTurn } = useFullResponses(latestToolCalls)
+  const { fullFetch, canMeasure, measure } = useFullResponses(
+    last?.turnId ?? null,
+    latestToolCalls
+  )
   const undoToastId = useRef<string | number | null>(null)
   const [rawFormattedOpen, setRawFormattedOpen] = useState(false)
   const [input, setInput] = useState("")
@@ -217,30 +221,12 @@ function App() {
     status !== undefined &&
     status.id === session.id &&
     status.pending?.startedAt === turn?.startedAt
-  // WHY: only a turn seen running here gets its full responses fetched.
-  //      Cached data (Back) can show a turn as running after it ended, and
-  //      that turn stays unmeasured. A turn that calls SerpApi takes longer
-  //      than one poll interval, so it is always seen.
-  const watched = useRef(false)
-
   useEffect(() => {
-    if (!turnRunning || status === undefined) return
-    if (stillRunning) {
-      watched.current = true
-      return
-    }
+    if (!turnRunning || status === undefined || stillRunning) return
     // Done, or another tab switched the session: adopt the server's. A
     // failed read keeps the last state on screen; the next poll retries.
-    const before = last
-    const sawRun = watched.current
     queryClient
       .fetchQuery({ ...chatQueries.session(), staleTime: 0 })
-      .then((next) => {
-        watched.current = false
-        if (next.id === status.id && status.id === session.id) {
-          measureTurn({ before, after: next.last, watched: sawRun })
-        }
-      })
       .catch(() => {})
     // WHY: `dataUpdatedAt`, not `status`: an unchanged poll keeps the same
     //      object, and a failed session read must try again on the next one.
@@ -376,6 +362,7 @@ function App() {
             searches={session.searches}
             lastTurnSearches={last?.searches ?? null}
             fullFetch={fullFetch}
+            onMeasureFull={canMeasure ? measure : undefined}
             onInspectRaw={
               latestToolCalls.length > 0
                 ? () => setRawFormattedOpen(true)
@@ -941,6 +928,7 @@ function BreakdownPanel({
   searches,
   lastTurnSearches,
   fullFetch,
+  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown | null
@@ -953,6 +941,7 @@ function BreakdownPanel({
   searches: ChatSearches
   lastTurnSearches: number | null
   fullFetch: FullFetchState
+  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
   const searchCard =
@@ -984,6 +973,7 @@ function BreakdownPanel({
             toolCalls={toolCalls}
             searchCard={searchCard}
             fullFetch={fullFetch}
+            onMeasureFull={onMeasureFull}
             onInspectRaw={onInspectRaw}
           />
         )}
@@ -1015,6 +1005,7 @@ function BreakdownBody({
   toolCalls,
   searchCard,
   fullFetch,
+  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown
@@ -1026,6 +1017,7 @@ function BreakdownBody({
   toolCalls: Array<ToolCallInfo>
   searchCard: ReactNode
   fullFetch: FullFetchState
+  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
   // WHY: the segments are estimates and LM Studio's count is exact, so the
@@ -1064,6 +1056,7 @@ function BreakdownBody({
         <JsonRestrictorCard
           toolCalls={toolCalls}
           fullFetch={fullFetch}
+          onMeasure={onMeasureFull}
           onInspect={onInspectRaw}
         />
       ) : null}
@@ -1373,17 +1366,19 @@ function LatencyCard({ phases }: { phases: Phases }) {
 }
 
 // Shows what the JSON Restrictor did in one glance: the full SerpApi
-// response vs. the filtered payload the model received. The full-response
-// measurement is fetched once per turn by the page and passed in via
-// `fullFetch`. When the turn ran without a restrictor the card just
-// reports what the model received.
+// response vs. the filtered payload the model received. The full response
+// costs one more search per tool call, so it is fetched only when the user
+// asks (`onMeasure`) and passed in via `fullFetch`. When the turn ran
+// without a restrictor the card just reports what the model received.
 function JsonRestrictorCard({
   toolCalls,
   fullFetch,
+  onMeasure,
   onInspect,
 }: {
   toolCalls: Array<ToolCallInfo>
   fullFetch: FullFetchState
+  onMeasure?: () => void
   onInspect?: () => void
 }) {
   const filteredTokens = toolCalls.reduce((sum, c) => sum + c.tokens, 0)
@@ -1423,6 +1418,26 @@ function JsonRestrictorCard({
           </span>
         </div>
       )}
+
+      {onMeasure &&
+      (fullFetch.status === "idle" || fullFetch.status === "error") ? (
+        <div className="flex flex-col gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onMeasure}
+            className="w-full justify-center gap-1.5"
+          >
+            <Scale data-icon="inline-start" aria-hidden />
+            Compare with the full response
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            Runs {toolCalls.length === 1 ? "the search" : "each search"} again
+            without the restrictor: {toolCalls.length} more SerpApi{" "}
+            {toolCalls.length === 1 ? "search" : "searches"}.
+          </p>
+        </div>
+      ) : null}
 
       {fullFetch.status === "loading" ? (
         <TextShimmerLoader text="Measuring the full response…" size="sm" />

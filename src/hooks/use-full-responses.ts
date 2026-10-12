@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useRef, useState } from "react"
+import { useState } from "react"
 
 import type { FullResponseResult, ToolCallInfo } from "@/lib/agent-types"
-import type { ChatSession, ChatTurnStats } from "@/lib/chat"
+import type { ChatSession } from "@/lib/chat"
 import { chatQueries, measureFullResponses } from "@/server/chat"
 
 // The full (unrestricted) SerpApi responses for the latest turn, shared by
@@ -40,70 +40,49 @@ function isFallbackResponse(call: ToolCallInfo): boolean {
 }
 
 /**
- * Whether a turn that just ended gets its full responses fetched, at one
- * SerpApi search per tool call: only when this page watched it run, it
- * succeeded, and it was not measured yet. The server replaces `last` only
- * on success, so a failed turn comes back with the previous turn's id.
+ * Whether a turn's tool calls can be compared with their full responses:
+ * every call ran a restrictor and none fell back to another engine.
+ * Exported for tests.
  */
-export function shouldMeasureTurn({
-  before,
-  after,
-  watched,
-  measured,
-}: {
-  before: ChatTurnStats | null
-  after: ChatTurnStats | null
-  watched: boolean
-  measured: ReadonlySet<string>
-}): boolean {
-  if (!watched || after === null) return false
-  const key = after.turnId
-  if (measured.has(key)) return false
-  return before === null || before.turnId !== key
+export function canCompare(calls: Array<ToolCallInfo>): boolean {
+  return (
+    calls.length > 0 &&
+    !calls.some(isFallbackResponse) &&
+    // No restrictor ran, so the response the model got already is the
+    // full one, nothing to compare against.
+    calls.every((c) => c.restrictor !== null)
+  )
 }
 
 /**
- * The full responses for the turn whose tool calls are on screen.
- * WHY: fetched once, when a turn ends on this page. A turn restored from
- *      the session (reload, Back, Undo) shows without them, because
- *      fetching again would spend SerpApi credits on a comparison already
- *      seen. Undo right after Clear still finds them here.
+ * The full responses for the turn whose tool calls are on screen, fetched
+ * when the user asks for them.
+ * WHY: the comparison runs each search again without the restrictor, at
+ *      one SerpApi search per tool call. Run after every answer, it
+ *      doubled what a chat spent, so it waits for a click.
  */
-export function useFullResponses(toolCalls: Array<ToolCallInfo>) {
+export function useFullResponses(
+  turnId: string | null,
+  toolCalls: Array<ToolCallInfo>
+) {
   const queryClient = useQueryClient()
   const [fetched, setFetched] = useState<{
     key: string
     state: FullFetchState
   } | null>(null)
-  const measured = useRef(new Set<string>())
-  const toolCallKey = toolCallKeyOf(toolCalls)
-  const fullFetch = fetched?.key === toolCallKey ? fetched.state : IDLE
 
-  function measureTurn(turn: {
-    before: ChatTurnStats | null
-    after: ChatTurnStats | null
-    watched: boolean
-  }) {
-    const { after } = turn
-    if (!after || !shouldMeasureTurn({ ...turn, measured: measured.current })) {
-      return
-    }
-    measured.current.add(after.turnId)
-    const calls = after.toolCalls
-    if (
-      calls.length === 0 ||
-      calls.some(isFallbackResponse) ||
-      // No restrictor ran, so the response the model got already is the
-      // full one, nothing to compare against.
-      calls.some((c) => c.restrictor === null)
-    ) {
-      return
-    }
-    const key = toolCallKeyOf(calls)
+  // Keyed by turn too: two turns can make the same tool call.
+  const key = `${turnId ?? ""}|${toolCallKeyOf(toolCalls)}`
+  const fullFetch = fetched?.key === key ? fetched.state : IDLE
+  const canMeasure = turnId !== null && canCompare(toolCalls)
+
+  function measure() {
+    if (!canMeasure) return
+    if (fullFetch.status === "loading" || fullFetch.status === "done") return
     const settle = (state: FullFetchState) =>
       setFetched((prev) => (prev?.key === key ? { key, state } : prev))
     setFetched({ key, state: { status: "loading" } })
-    measureFullResponses({ data: { turnId: after.turnId } })
+    measureFullResponses({ data: { turnId } })
       .then(({ results, searches }) => {
         // The searches it spent show in the sidebar's count right away.
         queryClient.setQueryData(
@@ -120,5 +99,5 @@ export function useFullResponses(toolCalls: Array<ToolCallInfo>) {
       )
   }
 
-  return { fullFetch, measureTurn }
+  return { fullFetch, canMeasure, measure }
 }

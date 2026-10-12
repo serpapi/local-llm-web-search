@@ -166,7 +166,9 @@ export function RestrictorDialog({
                     </p>
                   ) : (
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
-                      The full response wasn&rsquo;t measured for this call.
+                      Not measured yet. &ldquo;Compare with the full
+                      response&rdquo; in the sidebar fetches it, for one more
+                      SerpApi search per call.
                     </p>
                   )}
                 </div>

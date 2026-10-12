@@ -10,7 +10,7 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Talks to a local model served by LM Studio through its OpenAI-compatible API at `http://localhost:1234/v1`.
 - Gives the model seven SerpApi tools: `google_search`, `google_finance_search`, `google_news_search`, `google_maps_search`, `google_flights_search`, `google_hotels_search`, and `google_shopping_search`.
 - Runs an agent loop: every call carries the tools, so the model can check an answer or fix a search that missed, for up to three rounds. After the third, the answer call sets `tool_choice: "none"`, as LM Studio's own `.act()` turns tools off in its last round, and tells the model it can't search again: LM Studio leaves the tool definitions out of that call's prompt. If the model still writes a search instead of an answer, the app asks once more with the search results as plain text.
-- Trims each SerpApi response on SerpApi's servers with the `json_restrictor` parameter, so the model only receives the fields it needs. The sidebar shows the raw and restricted sizes side by side, and counts every SerpApi search the chat has spent.
+- Trims each SerpApi response on SerpApi's servers with the `json_restrictor` parameter, so the model only receives the fields it needs. The sidebar shows the size the model received and, when you ask for it, the raw size next to it, and counts every SerpApi search the chat has spent.
 - Lets you pick what the model reads as a tool result: SerpApi's JSON response, or its [Markdown output](https://serpapi.com/markdown-output) (`output=md`), with or without a restrictor.
 - Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then LM Studio's token count for the model's last call, split into its parts, and the time each phase took.
 - Lists every search result page the model used as a clickable source under the answer.
@@ -214,7 +214,7 @@ A raw SerpApi response runs from 3,000 to more than 50,000 tokens depending on t
 
 The model only receives the restricted response. The app fetches the full response only for the comparison view and counts it separately. Adding it to the total would be wrong, because the model never reads it.
 
-That comparison is usually one more SerpApi search per tool call: SerpApi serves a search from its cache only when every parameter matches a search from the last hour, and the comparison drops `json_restrictor`. The app runs it once per answer, and the sidebar counts it under "Full-response checks", next to the searches the model ran.
+That comparison is usually one more SerpApi search per tool call: SerpApi serves a search from its cache only when every parameter matches a search from the last hour, and the comparison drops `json_restrictor`. So the app runs it only when you click "Compare with the full response", at most once per answer, and the sidebar counts it under "Full-response checks", next to the searches the model ran.
 
 ### How multi-turn chat fits the window
 
