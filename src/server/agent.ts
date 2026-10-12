@@ -2349,9 +2349,48 @@ const MAX_TOOL_ROUNDS = 3
 //      wrote yet another search as text, and the turn ended with no answer.
 const FINAL_ROUND_NOTE = `You have used all ${MAX_TOOL_ROUNDS} search rounds, so you can't search again. Answer now from the search results above. If they don't contain the answer, say what you could not find.`
 
-// Appended for the one retry after an answer call that wrote no answer.
+// Closes the question in the one retry after an answer call that wrote no
+// answer, below the turn's search results.
 const ANSWER_NUDGE =
-  "The tool call is complete. Now write the final answer in prose using only the data already returned by the tool. Do NOT emit any more tool calls."
+  "You can't search again. Answer the question above from these search results. If they don't contain the answer, say what you could not find."
+
+/**
+ * The messages for the one retry after an answer call that wrote no
+ * answer: the turn's searches move into the question as plain text, and
+ * its tool-call messages go. Exported for tests.
+ *
+ * WHY: with no tools in the prompt and the final-round note, Qwen 3.8 27B
+ *      and Bonsai 27B still wrote another search in their tool-call
+ *      syntax, on the answer call and on a retry that only added a nudge
+ *      (2026-10-12). The chat template renders the turn's earlier calls in
+ *      that syntax, and the model carries on the pattern. With the results
+ *      as text there is no call left to carry on.
+ */
+export function answerFromResultsMessages(
+  messages: Array<ChatCompletionMessageParam>,
+  calls: Array<ToolCallInfo>
+): Array<ChatCompletionMessageParam> {
+  let at = messages.length - 1
+  while (at >= 0 && messages[at].role !== "user") at--
+  const question = at >= 0 ? messages[at].content : null
+  const results = calls.map((c) => {
+    const body =
+      typeof c.response === "string" ? c.response : JSON.stringify(c.response)
+    return `### ${toolCallLabel(c)}\n\n${body}`
+  })
+  return [
+    ...messages.slice(0, Math.max(at, 0)),
+    {
+      role: "user",
+      content: [
+        typeof question === "string" ? question : "",
+        "Your searches returned:",
+        ...results,
+        ANSWER_NUDGE,
+      ].join("\n\n"),
+    },
+  ]
+}
 
 /**
  * What the chat shows when a turn ends without an answer, from the model's
@@ -2946,9 +2985,10 @@ export const runAgentTurn = createServerOnlyFn(
         finalUsage = loop.last.usage
 
         // WHY: an empty answer (or one that still ends in a tool call)
-        //      gets one nudge to write prose. The nudge goes through a
-        //      throwaway `retryMessages` so it never pollutes the history
-        //      you return to the client.
+        //      gets one retry, with the searches as plain text (see
+        //      `answerFromResultsMessages`). It goes through a throwaway
+        //      `retryMessages` so it never pollutes the history you return
+        //      to the client.
         if (answer.length === 0 || hasInlineToolCall(lastRaw)) {
           devWarn(
             "[runQuery] answer call wrote no answer, retrying. Raw content:",
@@ -2957,10 +2997,7 @@ export const runAgentTurn = createServerOnlyFn(
           retried = true
           finalCallSentTools = false
           finalCallNote = ANSWER_NUDGE
-          const retryMessages: Array<ChatCompletionMessageParam> = [
-            ...messages,
-            { role: "system", content: ANSWER_NUDGE },
-          ]
+          const retryMessages = answerFromResultsMessages(messages, toolCalls)
           const retryStart = performance.now()
           const retry = await createCompletion({
             model,

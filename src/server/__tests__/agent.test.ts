@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   TOOLS,
   answerCallHint,
+  answerFromResultsMessages,
   buildSystemPrompt,
   classifyLoadResponse,
   contextBackoffSequence,
@@ -42,6 +43,7 @@ import {
 } from "../restrictors"
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions"
+import type { ToolCallInfo } from "@/lib/agent-types"
 
 // Tests cover the pure helpers around the SerpApi tool loop: history
 // sanitisation, secret redaction, inline-XML tool-call parsing, sliding-
@@ -1252,5 +1254,65 @@ describe("missingAnswerNotice", () => {
 
   it("falls back to the generic notice", () => {
     expect(missingAnswerNotice("", 1, false)).toMatch(/empty response/)
+  })
+})
+
+describe("answerFromResultsMessages", () => {
+  const messages: Array<ChatCompletionMessageParam> = [
+    { role: "system", content: "system prompt" },
+    { role: "user", content: "Who runs SerpApi?" },
+    { role: "assistant", content: "Julien Khaleghy." },
+    { role: "user", content: "When was it founded?" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "google_search",
+            arguments: '{"query":"SerpApi founded"}',
+          },
+        },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "## Organic Results" },
+  ]
+  const calls: Array<ToolCallInfo> = [
+    {
+      name: "google_search",
+      args: { query: "SerpApi founded" },
+      restrictor: null,
+      output: "markdown",
+      response: "## Organic Results\n\nFounded in 2017.",
+      tokens: 8,
+      serpApiMs: 900,
+    },
+    {
+      name: "google_finance_search",
+      args: { query: "GOOGL:NASDAQ" },
+      restrictor: null,
+      output: "json",
+      response: { summary: { price: 1 } },
+      tokens: 6,
+      serpApiMs: 700,
+    },
+  ]
+
+  it("moves the turn's searches into the question as plain text", () => {
+    const out = answerFromResultsMessages(messages, calls)
+    // Earlier turns stay as they were; the tool exchange is gone.
+    expect(out.slice(0, 3)).toEqual(messages.slice(0, 3))
+    expect(out).toHaveLength(4)
+    expect(out.some((m) => m.role === "tool")).toBe(false)
+    const last = out[3]
+    expect(last.role).toBe("user")
+    const text = String(last.content)
+    expect(text.startsWith("When was it founded?")).toBe(true)
+    expect(text).toContain("### Search · SerpApi founded")
+    expect(text).toContain("Founded in 2017.")
+    expect(text).toContain('{"summary":{"price":1}}')
+    expect(text.endsWith("say what you could not find.")).toBe(true)
   })
 })
