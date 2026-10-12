@@ -161,7 +161,7 @@ Pick several models in the model picker to run them one after another, in the or
 
 Badges on a cell:
 
-- **retried.** The model wrote no answer after the search, and the agent asked once more.
+- **retried.** The model wrote no answer after the search, or LM Studio couldn't parse its reply twice, and the agent asked once more with the search results as plain text.
 - **N rounds.** The model searched again after reading the results, to check an answer it had or to fix a search that missed. Every call carries the tools, up to 3 rounds; after the third, the answer call goes without them.
 - **cut off.** The answer stopped at the 4,096-token limit. On models that think before answering, the thinking counts against that limit.
 - **over context.** Older runs only. The prompt was larger than the loaded window, and an MLX model ran it anyway. The agent now stops these turns instead.

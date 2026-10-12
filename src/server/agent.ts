@@ -3023,7 +3023,10 @@ export const runAgentTurn = async (
           usages.push(reply.usage)
           return reply
         },
-        readCalls: (reply) => readCalls(reply.choices[0].message),
+        // WHY: a fallback reply ends the loop. Its prompt said the model
+        //      can't search again, so a search written in it doesn't run.
+        readCalls: (reply) =>
+          lastCall === "fallback" ? [] : readCalls(reply.choices[0].message),
         runRound: async (calls) => {
           setProgress(progressId, "tools", calls.map((c) => c.name).join(" + "))
           await runToolRound(calls)
