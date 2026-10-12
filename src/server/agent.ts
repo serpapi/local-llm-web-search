@@ -2428,6 +2428,32 @@ export function answerFromResultsMessages(
 }
 
 /**
+ * The request for an answer call after a search round. With `"none"`, the
+ * call after the last round, it sends no tools and adds the final-round
+ * note. Exported for tests.
+ *
+ * WHY: no tools at all, as in the last round of LM Studio's `.act()`. The
+ *      prompt is the same as with `tool_choice: "none"`, which LM Studio
+ *      sends without them, and a tool call the model writes anyway comes
+ *      back as text, which the retry handles.
+ */
+export function followUpParams(
+  model: string,
+  messages: Array<ChatCompletionMessageParam>,
+  toolChoice: "auto" | "none"
+): ChatCompletionCreateParamsNonStreaming {
+  // Most of these calls write the answer, so a little more temperature
+  // than the tool-picking first call.
+  const common = { model, temperature: 0.3, max_tokens: MAX_COMPLETION_TOKENS }
+  return toolChoice === "none"
+    ? {
+        ...common,
+        messages: [...messages, { role: "system", content: FINAL_ROUND_NOTE }],
+      }
+    : { ...common, messages, tools: TOOLS, tool_choice: "auto" }
+}
+
+/**
  * What the chat shows when a turn ends without an answer, from the model's
  * last raw reply. Exported for tests.
  *
@@ -2955,10 +2981,9 @@ export const runAgentTurn = createServerOnlyFn(
 
         await runToolRound(resolvedCalls)
 
-        // WHY: the tools stay on every call, so LM Studio parses a second
-        //      search into `tool_calls` instead of leaving it in the text.
-        //      Temperature goes up a bit, since most of these calls write
-        //      the answer.
+        // WHY: the tools stay on every call but the last (see
+        //      `followUpParams`), so LM Studio parses a second search into
+        //      `tool_calls` instead of leaving it in the text.
         // Which call wrote the loop's last reply. Set inside `complete`,
         // which TypeScript can't follow: no narrowing.
         let lastCall = "auto" as "auto" | "none" | "fallback"
@@ -2971,30 +2996,7 @@ export const runAgentTurn = createServerOnlyFn(
             let reply: typeof first
             try {
               reply = await createCompletion(
-                toolChoice === "none"
-                  ? // WHY: no tools at all on the last call, as in the last
-                    //      round of LM Studio's `.act()`. The prompt is the
-                    //      same as with `tool_choice: "none"`, which LM
-                    //      Studio sends without them, and a tool call the
-                    //      model writes anyway comes back as text, which
-                    //      the retry below handles.
-                    {
-                      model,
-                      messages: [
-                        ...messages,
-                        { role: "system", content: FINAL_ROUND_NOTE },
-                      ],
-                      temperature: 0.3,
-                      max_tokens: MAX_COMPLETION_TOKENS,
-                    }
-                  : {
-                      model,
-                      messages,
-                      tools: TOOLS,
-                      tool_choice: "auto",
-                      temperature: 0.3,
-                      max_tokens: MAX_COMPLETION_TOKENS,
-                    }
+                followUpParams(model, messages, toolChoice)
               )
             } catch (err) {
               const m = err instanceof Error ? err.message : String(err)

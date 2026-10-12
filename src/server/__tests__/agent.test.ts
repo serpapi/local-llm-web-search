@@ -9,6 +9,7 @@ import {
   contextBackoffSequence,
   contextOverride,
   extractSources,
+  followUpParams,
   hasInlineToolCall,
   historyAfterTurn,
   instancesToFree,
@@ -1370,5 +1371,29 @@ describe("instancesToFree", () => {
 
   it("frees the other LLMs and keeps embedding models", () => {
     expect(instancesToFree(loaded, "qwen/qwen3.8-27b")).toEqual([loaded[1]])
+  })
+})
+
+describe("followUpParams", () => {
+  const messages: Array<ChatCompletionMessageParam> = [
+    { role: "system", content: "system prompt" },
+    { role: "user", content: "Who runs SerpApi?" },
+  ]
+
+  it("keeps the tools on a call that may search again", () => {
+    const params = followUpParams("qwen/qwen3.8-27b", messages, "auto")
+    expect(params.tools).toBe(TOOLS)
+    expect(params.tool_choice).toBe("auto")
+    expect(params.messages).toEqual(messages)
+  })
+
+  it("sends no tools after the last round, with the final-round note", () => {
+    const params = followUpParams("qwen/qwen3.8-27b", messages, "none")
+    expect(params).not.toHaveProperty("tools")
+    expect(params).not.toHaveProperty("tool_choice")
+    expect(params.messages.slice(0, 2)).toEqual(messages)
+    const note = params.messages[2]
+    expect(note.role).toBe("system")
+    expect(String(note.content)).toMatch(/can't search again/)
   })
 })
