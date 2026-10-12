@@ -2341,6 +2341,11 @@ export const fetchFullResponse = async (
 // room for a follow-up search or two without letting a model loop.
 const MAX_TOOL_ROUNDS = 3
 
+// Tool calls one turn may run, across its rounds. No /bench turn in October
+// made more than 3, so this only stops a model that asks for many searches
+// at once from spending that many SerpApi credits.
+const MAX_TOOL_CALLS_PER_TURN = 6
+
 // WHY: sent with the call that follows the last round, which goes without
 //      tools. (With `tool_choice: "none"` LM Studio leaves them out of the
 //      prompt too, measured on Gemma 4 12B and Qwen 3.8 27B, 2026-10-09.)
@@ -2838,7 +2843,24 @@ export const runAgentTurn = async (
       // Execute one round of tool calls and append the assistant turn and
       // the tool results to `messages`. Runs once per round of the loop.
       let roundNo = 0
-      const runToolRound = async (calls: Array<ResolvedCall>) => {
+      const runToolRound = async (requested: Array<ResolvedCall>) => {
+        const calls = requested.slice(
+          0,
+          MAX_TOOL_CALLS_PER_TURN - toolCalls.length
+        )
+        // A later round past the cap fails, and the loop asks for the
+        // answer from the results so far.
+        if (calls.length === 0) {
+          throw new ToolArgError(
+            `The model asked for more than ${MAX_TOOL_CALLS_PER_TURN} searches in one turn.`,
+            "Ask about fewer things at once."
+          )
+        }
+        if (calls.length < requested.length) {
+          devWarn(
+            `[runQuery] ran ${calls.length} of the ${requested.length} tool calls the model asked for: the turn's limit is ${MAX_TOOL_CALLS_PER_TURN}.`
+          )
+        }
         roundNo += 1
         const round = roundNo
         // NOTE: the phase timer wraps the whole batch. Parallel calls
