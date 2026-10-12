@@ -1178,7 +1178,7 @@ describe("runToolLoop", () => {
 
 describe("buildSystemPrompt", () => {
   // The loop keeps the tools on after the first round, so the prompt must
-  // not tell the model it can't search again (docs/agent-loop.md).
+  // not tell the model it can't search again.
   it("allows another search when the results missed", () => {
     const prompt = buildSystemPrompt()
     expect(prompt).not.toContain("cannot search again")

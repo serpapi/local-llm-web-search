@@ -2338,8 +2338,8 @@ export const fetchFullResponse = createServerOnlyFn(
   }
 )
 
-// Tool rounds one turn may run. No benchmark turn has needed more than 2
-// (docs/agent-loop.md), so 3 leaves headroom without letting a model loop.
+// Tool rounds one turn may run. Most /bench answers search once; 3 leaves
+// room for a follow-up search or two without letting a model loop.
 const MAX_TOOL_ROUNDS = 3
 
 // WHY: sent with the call that follows the last round. That call sets
