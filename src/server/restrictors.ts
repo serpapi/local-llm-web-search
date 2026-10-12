@@ -171,9 +171,9 @@ export const MARKDOWN_RESTRICTORS: Record<RestrictorTool, string> = {
   // has to come from the organic results or the related questions. With 3
   // organic results, listed after the related questions, Qwen 3.8, Gemma 4
   // and Bonsai each ran out of search rounds on at least one question about
-  // SerpApi's CEO, founding year or prices (2026-10-09). Two more results
-  // still leave Search under the JSON count: with 3 it measured 220 to 264
-  // tokens, against about 850 in JSON.
+  // SerpApi's CEO, founding year or prices (2026-10-09). SerpApi writes the
+  // sections in the order the paths are listed. With five results, Search
+  // measured 466 tokens on /bench, against 620 in JSON (2026-10-12).
   google_search: [
     "organic_results[0:5].{title,link,snippet,date}",
     "answer_box.{answer,snippet,title,list}",
