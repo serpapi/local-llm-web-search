@@ -5,7 +5,6 @@
 import "@tanstack/react-start/server-only"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import { createServerOnlyFn } from "@tanstack/react-start"
 import OpenAI from "openai"
 import {
   InvalidArgumentError,
@@ -1037,44 +1036,37 @@ type ToolResult = {
  * Run a tool's SerpApi call in the requested output mode. Pass
  * `restricted: false` for the full, untrimmed response the compare view
  * shows; the chat loop runs restricted unless the output mode opts out.
- *
- * WHY: `createServerOnlyFn`, not a plain export, like `runAgentTurn`. A
- *      plain export keeps everything it references in the client module
- *      graph, the `serpapi` SDK included. Wrapped, the client build drops
- *      the body and the SDK import with it.
  */
-export const executeTool = createServerOnlyFn(
-  async (
-    name: RestrictorTool,
-    args: ToolArgs,
-    output: ToolOutput,
-    restricted = true
-  ): Promise<ToolResult> => {
-    const restrictor = restricted ? restrictorFor(name, output) : null
-    const params: Record<string, unknown> = {
-      ...toolParams(name, args),
-      ...(restrictor ? { json_restrictor: restrictor } : {}),
-    }
-    try {
-      return await executeWithParams(params, output)
-    } catch (err) {
-      // WHY: models carry the user's country into every search, and some
-      //      engines refuse some countries (Google Shopping rejects `uy`).
-      //      One retry without the refused parameter answers the question.
-      if (!(err instanceof SerpApiError)) throw err
-      // WHY: one search in the real-usage test came back HTTP 503 and the
-      //      next one worked. A single retry hides that from the user.
-      if (isTransientSerpApiError(err.message, err.status)) {
-        return executeWithParams(params, output)
-      }
-      const param = unsupportedParam(err.message)
-      if (!param || !(param in params)) throw err
-      const retry = { ...params }
-      delete retry[param]
-      return executeWithParams(retry, output)
-    }
+export const executeTool = async (
+  name: RestrictorTool,
+  args: ToolArgs,
+  output: ToolOutput,
+  restricted = true
+): Promise<ToolResult> => {
+  const restrictor = restricted ? restrictorFor(name, output) : null
+  const params: Record<string, unknown> = {
+    ...toolParams(name, args),
+    ...(restrictor ? { json_restrictor: restrictor } : {}),
   }
-)
+  try {
+    return await executeWithParams(params, output)
+  } catch (err) {
+    // WHY: models carry the user's country into every search, and some
+    //      engines refuse some countries (Google Shopping rejects `uy`).
+    //      One retry without the refused parameter answers the question.
+    if (!(err instanceof SerpApiError)) throw err
+    // WHY: one search in the real-usage test came back HTTP 503 and the
+    //      next one worked. A single retry hides that from the user.
+    if (isTransientSerpApiError(err.message, err.status)) {
+      return executeWithParams(params, output)
+    }
+    const param = unsupportedParam(err.message)
+    if (!param || !(param in params)) throw err
+    const retry = { ...params }
+    delete retry[param]
+    return executeWithParams(retry, output)
+  }
+}
 
 async function executeWithParams(
   params: Record<string, unknown>,
@@ -2217,10 +2209,8 @@ function setProgress(
 }
 
 /** The current stage of the turn started with `progressId`, if it is still running. */
-export const readQueryProgress = createServerOnlyFn(
-  (progressId: string): QueryProgress | null =>
-    queryProgress.get(progressId) ?? null
-)
+export const readQueryProgress = (progressId: string): QueryProgress | null =>
+  queryProgress.get(progressId) ?? null
 
 // WHY: sliding window: keep the system prompt + tools intact and drop
 //      the oldest turns when the conversation won't fit in
@@ -2288,11 +2278,8 @@ export function sanitizeHistoryForReplay(
  *      the user actually cares about; the older ones are the safe ones
  *      to lose.
  *
- * `measure` is a parameter, not the module's `countTokens`, on purpose:
- * this is a plain exported function, so anything it references stays in
- * the client build. Passing the tokenizer in keeps `tokens.server.ts`
- * behind the server-function boundary, and lets the tests use a cheap
- * length-based ruler.
+ * `measure` is a parameter, not the module's `countTokens`, so the tests
+ * can use a cheap length-based ruler.
  */
 export function trimHistoryToFit(
   history: Array<ChatCompletionMessageParam>,
@@ -2327,30 +2314,28 @@ export function trimHistoryToFit(
  *
  * Each call is one more SerpApi search: the cache only serves a search
  * whose parameters all match, and this one drops `json_restrictor`. The
- * chat session runs it once per turn and counts it with the turn's own
- * searches (`chat-session.server.ts`).
+ * chat session runs it when the user asks, at most once per turn, and
+ * counts it with the chat's searches (`chat-session.server.ts`).
  */
-export const fetchFullResponse = createServerOnlyFn(
-  async (
-    call: Pick<ToolCallInfo, "name" | "args" | "output">
-  ): Promise<FullResponseResult> => {
-    const { name, args, output } = call
-    if (!isRestrictorTool(name)) {
-      throw new ToolArgError(
-        `Unknown tool: ${name}`,
-        "The compare view was asked for a tool the server doesn't know about."
-      )
-    }
-    const validated = validateToolArgs(name, args)
-    const start = performance.now()
-    const { payload } = await executeTool(name, validated, output, false)
-    return {
-      response: payload,
-      tokens: countTokens(payload),
-      serpApiMs: Math.round(performance.now() - start),
-    }
+export const fetchFullResponse = async (
+  call: Pick<ToolCallInfo, "name" | "args" | "output">
+): Promise<FullResponseResult> => {
+  const { name, args, output } = call
+  if (!isRestrictorTool(name)) {
+    throw new ToolArgError(
+      `Unknown tool: ${name}`,
+      "The compare view was asked for a tool the server doesn't know about."
+    )
   }
-)
+  const validated = validateToolArgs(name, args)
+  const start = performance.now()
+  const { payload } = await executeTool(name, validated, output, false)
+  return {
+    response: payload,
+    tokens: countTokens(payload),
+    serpApiMs: Math.round(performance.now() - start),
+  }
+}
 
 // Tool rounds one turn may run. Most /bench answers search once; 3 leaves
 // room for a follow-up search or two without letting a model loop.
@@ -2540,718 +2525,712 @@ export type RunQueryInput = z.infer<typeof runQueryInput>
  * One full agent turn: search until the model answers. Called on the
  * server by the chat session (`chat-session.server.ts`) and the benchmark
  * job (`bench-job.server.ts`), never straight from the browser.
- *
- * WHY: `createServerOnlyFn`, not a plain export. Plain exports stay in the
- *      client bundle with everything they reference, which would pull the
- *      tokenizer into the browser. Wrapped, the client build drops the body.
  */
-export const runAgentTurn = createServerOnlyFn(
-  async (data: RunQueryInput): Promise<RunQueryResult> => {
-    const start = performance.now()
-    const {
-      question,
-      model,
-      contextLength,
-      toolUseTrained,
-      history,
-      toolOutput,
-    } = data
-    const progressId = data.progressId
+export const runAgentTurn = async (
+  data: RunQueryInput
+): Promise<RunQueryResult> => {
+  const start = performance.now()
+  const {
+    question,
+    model,
+    contextLength,
+    toolUseTrained,
+    history,
+    toolOutput,
+  } = data
+  const progressId = data.progressId
 
-    // `effectiveContext` drives history trimming (falls back to the
-    // requested size if we can't confirm a load). `loadedContext` is the
-    // size LM Studio actually accepted (only set on a real load) and is
-    // what the UI shows as the true window. They differ when a load is
-    // backed off, or when LM Studio can't be reached at all.
-    let effectiveContext = contextLength
-    let loadedContext: number | null = null
-    let appliedContext: number | null = null
+  // `effectiveContext` drives history trimming (falls back to the
+  // requested size if we can't confirm a load). `loadedContext` is the
+  // size LM Studio actually accepted (only set on a real load) and is
+  // what the UI shows as the true window. They differ when a load is
+  // backed off, or when LM Studio can't be reached at all.
+  let effectiveContext = contextLength
+  let loadedContext: number | null = null
+  let appliedContext: number | null = null
 
-    const emptyBreakdown = (): Breakdown => ({
-      tool_definitions: 0,
-      system_prompt: 0,
-      conversation_history: 0,
-      user_message: 0,
+  const emptyBreakdown = (): Breakdown => ({
+    tool_definitions: 0,
+    system_prompt: 0,
+    conversation_history: 0,
+    user_message: 0,
+    tool_call: 0,
+    tool_result: 0,
+    final_response: 0,
+  })
+  const emptyPhases = (): Phases => ({
+    firstInferenceMs: 0,
+    toolExecutionMs: 0,
+    secondInferenceMs: 0,
+  })
+
+  // WHY: fast path for non-tool-trained models. The structured
+  //      `tool_calls` field will come back empty and the inline
+  //      parser will fail silently. Better to tell the user up
+  //      front than to let them watch a blank loop.
+  if (toolUseTrained === false) {
+    return {
+      ok: false,
+      answer:
+        "This model isn't trained for tool use, so it can't call SerpApi. Pick a tool-trained model, such as Qwen 3.8 or Gemma 4, in the model picker.",
+      breakdown: emptyBreakdown(),
+      exactUsage: null,
+      totalUsage: null,
+      toolCalls: [],
+      sources: [],
+      elapsedMs: Math.round(performance.now() - start),
+      phases: emptyPhases(),
+      messages: history as Array<ChatCompletionMessageParam>,
+      trimmedTurns: 0,
+      conversationTokens: 0,
+      loadedContext: null,
+      appliedContext: null,
+      retried: false,
+      cutOff: false,
+      answerMissing: false,
+      toolRounds: 0,
+      rawReply: null,
+    }
+  }
+
+  // This query keeps the model resident: the idle-unload countdown is
+  // cancelled here and re-armed in `finally` once the last in-flight
+  // query settles (see `beginQuery` / `endQuery`). Outside the `try` so
+  // the pair is always balanced.
+  beginQuery(model)
+  // Outside the `try` so a turn that fails after its searches still
+  // reports them: the benchmark inspector shows what ran and how big it was.
+  const toolCalls: Array<ToolCallInfo> = []
+  try {
+    setProgress(progressId, "load")
+    // WHY: loading this model unloads every other one. Without this check
+    //      a chat question on another model unloads the model a running
+    //      benchmark cell (or an earlier question) is still using.
+    const busy = modelInUseOtherThan(model)
+    if (busy) {
+      throw new LmStudioError(
+        `Another question is still running on ${busy}.`,
+        "Wait for it to finish, or stop the benchmark run, then ask again."
+      )
+    }
+    // NOTE: the load probe may shrink the context to fit this machine, and
+    //       MLX may apply more or less than asked. Budget against the
+    //       smaller of the two, so history trimming never overflows the
+    //       real window and never grows past what was asked for.
+    if (typeof contextLength === "number") {
+      const load = await ensureModelLoaded(model, contextLength)
+      appliedContext = load.applied
+      loadedContext =
+        load.applied === null
+          ? load.requested
+          : Math.min(load.requested, load.applied)
+      effectiveContext = loadedContext
+    }
+
+    const client = new OpenAI({
+      baseURL: lmStudioUrl(),
+      // LM Studio ignores the key unless "Require Authentication" is on.
+      apiKey: lmStudioApiKey() ?? "lm-studio",
+      // WHY: the SDK retries a timed-out request twice by default, silently.
+      //      A benchmark then records the retry's answer and timing as if
+      //      the first call had produced them. A timeout must surface.
+      maxRetries: 0,
+      timeout:
+        toolOutput === "markdown-full"
+          ? LM_STUDIO_CHAT_TIMEOUT_FULL_MS
+          : LM_STUDIO_CHAT_TIMEOUT_MS,
+    })
+    const systemPrompt = buildSystemPrompt()
+
+    // WHY: LM Studio rejects a reply it can't parse into the model's
+    //      tool-call format ("does not match the expected peg-native
+    //      format"). It's a sampling slip: Muse Glimmer lost three answers
+    //      this way in one chat on 2026-10-09, and the same question went
+    //      through when asked again. One more try costs less than a
+    //      failed turn.
+    const createCompletion = async (
+      params: ChatCompletionCreateParamsNonStreaming
+    ): Promise<ChatCompletion> => {
+      try {
+        return await client.chat.completions.create(params)
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err)
+        if (!isUnparseableReply(m)) throw err
+        devWarn(
+          "[runQuery] LM Studio could not parse the reply, asking again:",
+          m
+        )
+        return await client.chat.completions.create(params)
+      }
+    }
+
+    // WHY: static overhead = system prompt + tool definitions + the
+    //      current user message + a rough budget for the answer you
+    //      haven't generated yet. Budget falls back to a conservative
+    //      8192 when `contextLength` isn't provided (first call).
+    const castedHistory = history as Array<ChatCompletionMessageParam>
+    // WHY: neutralise replayable tool payloads BEFORE trimming so the
+    //      token counts reflect what the model actually sees. Skip
+    //      this and a small model will echo the previous turn's
+    //      pre-rendered table instead of re-calling the tool.
+    const sanitizedHistory = sanitizeHistoryForReplay(castedHistory)
+    const toolsTokens = countTokens(TOOLS)
+    const systemTokens = countTokens(systemPrompt)
+    const questionTokens = countTokens(question)
+    const ANSWER_HEADROOM = 1024 // reserved for tool result + answer
+    const staticOverhead =
+      toolsTokens + systemTokens + questionTokens + ANSWER_HEADROOM
+    const budget = effectiveContext ?? 8192
+    const { trimmed: trimmedHistory, dropped: trimmedTurns } = trimHistoryToFit(
+      sanitizedHistory,
+      staticOverhead,
+      budget,
+      countTokens
+    )
+
+    const messages: Array<ChatCompletionMessageParam> = [
+      { role: "system", content: systemPrompt },
+      ...trimmedHistory,
+      { role: "user", content: question },
+    ]
+
+    const breakdown: Breakdown = {
+      tool_definitions: toolsTokens,
+      system_prompt: systemTokens,
+      // An empty history would count as "[]", one token.
+      conversation_history:
+        trimmedHistory.length > 0 ? countTokens(trimmedHistory) : 0,
+      user_message: questionTokens,
       tool_call: 0,
       tool_result: 0,
       final_response: 0,
-    })
-    const emptyPhases = (): Phases => ({
-      firstInferenceMs: 0,
-      toolExecutionMs: 0,
-      secondInferenceMs: 0,
-    })
-
-    // WHY: fast path for non-tool-trained models. The structured
-    //      `tool_calls` field will come back empty and the inline
-    //      parser will fail silently. Better to tell the user up
-    //      front than to let them watch a blank loop.
-    if (toolUseTrained === false) {
-      return {
-        ok: false,
-        answer:
-          "This model isn't trained for tool use, so it can't call SerpApi. Pick a tool-trained model, such as Qwen 3.8 or Gemma 4, in the model picker.",
-        breakdown: emptyBreakdown(),
-        exactUsage: null,
-        totalUsage: null,
-        toolCalls: [],
-        sources: [],
-        elapsedMs: Math.round(performance.now() - start),
-        phases: emptyPhases(),
-        messages: history as Array<ChatCompletionMessageParam>,
-        trimmedTurns: 0,
-        conversationTokens: 0,
-        loadedContext: null,
-        appliedContext: null,
-        retried: false,
-        cutOff: false,
-        answerMissing: false,
-        toolRounds: 0,
-        rawReply: null,
-      }
     }
 
-    // This query keeps the model resident: the idle-unload countdown is
-    // cancelled here and re-armed in `finally` once the last in-flight
-    // query settles (see `beginQuery` / `endQuery`). Outside the `try` so
-    // the pair is always balanced.
-    beginQuery(model)
-    // Outside the `try` so a turn that fails after its searches still
-    // reports them: the benchmark inspector shows what ran and how big it was.
-    const toolCalls: Array<ToolCallInfo> = []
+    const phases: Phases = emptyPhases()
+
+    // WHY: low temperature on the tool-picking call. Small models
+    //      pick tools more reliably when you sample close to
+    //      deterministic. Keep the creativity for the answer call.
+    setProgress(progressId, "think")
+    const t0 = performance.now()
+    let first: ChatCompletion
     try {
-      setProgress(progressId, "load")
-      // WHY: loading this model unloads every other one. Without this check
-      //      a chat question on another model unloads the model a running
-      //      benchmark cell (or an earlier question) is still using.
-      const busy = modelInUseOtherThan(model)
-      if (busy) {
-        throw new LmStudioError(
-          `Another question is still running on ${busy}.`,
-          "Wait for it to finish, or stop the benchmark run, then ask again."
-        )
-      }
-      // NOTE: the load probe may shrink the context to fit this machine, and
-      //       MLX may apply more or less than asked. Budget against the
-      //       smaller of the two, so history trimming never overflows the
-      //       real window and never grows past what was asked for.
-      if (typeof contextLength === "number") {
-        const load = await ensureModelLoaded(model, contextLength)
-        appliedContext = load.applied
-        loadedContext =
-          load.applied === null
-            ? load.requested
-            : Math.min(load.requested, load.applied)
-        effectiveContext = loadedContext
-      }
-
-      const client = new OpenAI({
-        baseURL: lmStudioUrl(),
-        // LM Studio ignores the key unless "Require Authentication" is on.
-        apiKey: lmStudioApiKey() ?? "lm-studio",
-        // WHY: the SDK retries a timed-out request twice by default, silently.
-        //      A benchmark then records the retry's answer and timing as if
-        //      the first call had produced them. A timeout must surface.
-        maxRetries: 0,
-        timeout:
-          toolOutput === "markdown-full"
-            ? LM_STUDIO_CHAT_TIMEOUT_FULL_MS
-            : LM_STUDIO_CHAT_TIMEOUT_MS,
+      first = await createCompletion({
+        model,
+        messages,
+        tools: TOOLS,
+        tool_choice: "auto",
+        temperature: 0.1,
+        max_tokens: MAX_COMPLETION_TOKENS,
       })
-      const systemPrompt = buildSystemPrompt()
-
-      // WHY: LM Studio rejects a reply it can't parse into the model's
-      //      tool-call format ("does not match the expected peg-native
-      //      format"). It's a sampling slip: Muse Glimmer lost three answers
-      //      this way in one chat on 2026-10-09, and the same question went
-      //      through when asked again. One more try costs less than a
-      //      failed turn.
-      const createCompletion = async (
-        params: ChatCompletionCreateParamsNonStreaming
-      ): Promise<ChatCompletion> => {
-        try {
-          return await client.chat.completions.create(params)
-        } catch (err) {
-          const m = err instanceof Error ? err.message : String(err)
-          if (!isUnparseableReply(m)) throw err
-          devWarn(
-            "[runQuery] LM Studio could not parse the reply, asking again:",
-            m
-          )
-          return await client.chat.completions.create(params)
-        }
-      }
-
-      // WHY: static overhead = system prompt + tool definitions + the
-      //      current user message + a rough budget for the answer you
-      //      haven't generated yet. Budget falls back to a conservative
-      //      8192 when `contextLength` isn't provided (first call).
-      const castedHistory = history as Array<ChatCompletionMessageParam>
-      // WHY: neutralise replayable tool payloads BEFORE trimming so the
-      //      token counts reflect what the model actually sees. Skip
-      //      this and a small model will echo the previous turn's
-      //      pre-rendered table instead of re-calling the tool.
-      const sanitizedHistory = sanitizeHistoryForReplay(castedHistory)
-      const toolsTokens = countTokens(TOOLS)
-      const systemTokens = countTokens(systemPrompt)
-      const questionTokens = countTokens(question)
-      const ANSWER_HEADROOM = 1024 // reserved for tool result + answer
-      const staticOverhead =
-        toolsTokens + systemTokens + questionTokens + ANSWER_HEADROOM
-      const budget = effectiveContext ?? 8192
-      const { trimmed: trimmedHistory, dropped: trimmedTurns } =
-        trimHistoryToFit(sanitizedHistory, staticOverhead, budget, countTokens)
-
-      const messages: Array<ChatCompletionMessageParam> = [
-        { role: "system", content: systemPrompt },
-        ...trimmedHistory,
-        { role: "user", content: question },
-      ]
-
-      const breakdown: Breakdown = {
-        tool_definitions: toolsTokens,
-        system_prompt: systemTokens,
-        // An empty history would count as "[]", one token.
-        conversation_history:
-          trimmedHistory.length > 0 ? countTokens(trimmedHistory) : 0,
-        user_message: questionTokens,
-        tool_call: 0,
-        tool_result: 0,
-        final_response: 0,
-      }
-
-      const phases: Phases = emptyPhases()
-
-      // WHY: low temperature on the tool-picking call. Small models
-      //      pick tools more reliably when you sample close to
-      //      deterministic. Keep the creativity for the answer call.
-      setProgress(progressId, "think")
-      const t0 = performance.now()
-      let first: ChatCompletion
-      try {
-        first = await createCompletion({
-          model,
-          messages,
-          tools: TOOLS,
-          tool_choice: "auto",
-          temperature: 0.1,
-          max_tokens: MAX_COMPLETION_TOKENS,
-        })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new LmStudioError(
+        `LM Studio chat completion failed: ${msg}`,
+        answerCallHint(
+          msg,
+          "Check that LM Studio is running on :1234 and the selected model is loaded."
+        )
+      )
+    }
+    phases.firstInferenceMs = Math.round(performance.now() - t0)
+    // Throws when an MLX model read more than the app loaded.
+    const ensureFits = (usage: typeof first.usage) => {
+      const over = promptOverBudget(usage?.prompt_tokens, loadedContext)
+      if (over) {
         throw new LmStudioError(
-          `LM Studio chat completion failed: ${msg}`,
-          answerCallHint(
-            msg,
-            "Check that LM Studio is running on :1234 and the selected model is loaded."
-          )
+          over,
+          "MLX models run longer prompts anyway; the app stops them so every model gets the same window. Use a restricted output, or set LMSTUDIO_CONTEXT_LENGTH higher."
         )
       }
-      phases.firstInferenceMs = Math.round(performance.now() - t0)
-      // Throws when an MLX model read more than the app loaded.
-      const ensureFits = (usage: typeof first.usage) => {
-        const over = promptOverBudget(usage?.prompt_tokens, loadedContext)
-        if (over) {
-          throw new LmStudioError(
-            over,
-            "MLX models run longer prompts anyway; the app stops them so every model gets the same window. Use a restricted output, or set LMSTUDIO_CONTEXT_LENGTH higher."
-          )
+    }
+    ensureFits(first.usage)
+    let cutOff = first.choices[0].finish_reason === "length"
+    const msg = first.choices[0].message
+    let answer = ""
+    let retried = false
+    // How many tool rounds ran: 0 for a direct answer, up to
+    // `MAX_TOOL_ROUNDS`.
+    let rounds = 0
+    // The model's last raw reply, kept so a failed turn can show what
+    // the model actually wrote instead of a generic error.
+    let lastRaw = ""
+    // What the turn's last call carried, for its breakdown: the tool
+    // definitions unless it couldn't search, plus any note added to it.
+    let finalCallSentTools = true
+    let finalCallNote = ""
+    // One entry per executed call: the SERP link captured from
+    // `search_metadata` before it was stripped from the model's view.
+    const toolSearchUrls: Array<string | null> = []
+    // NOTE: usage from the final call is ground truth: LM Studio's
+    //       own tokenizer, not the cl100k estimate. `usages` collects
+    //       every completion so the turn total can be summed as well.
+    let finalUsage = first.usage
+    const usages: Array<typeof first.usage> = [first.usage]
+
+    // WHY: collect every tool call the model emitted this turn. You
+    //      accept two shapes: the structured `tool_calls` field
+    //      (OpenAI-compat) and inline `<tool_call>` XML used by some
+    //      open models. Zero calls means the model answered directly.
+    type ResolvedCall = {
+      name: string
+      rawArgs: string
+      args: Record<string, unknown>
+      id: string
+      isInline: boolean
+    }
+    const readCalls = (reply: typeof msg): Array<ResolvedCall> => {
+      const calls: Array<ResolvedCall> = []
+      if (reply.tool_calls && reply.tool_calls.length > 0) {
+        for (const call of reply.tool_calls) {
+          if (call.type !== "function") {
+            throw new LmStudioError(
+              `Unexpected tool call type: ${call.type}`,
+              "The model returned a non-function tool call. This shouldn't happen with OpenAI-compat APIs."
+            )
+          }
+          let args: Record<string, unknown>
+          try {
+            args = JSON.parse(call.function.arguments) as Record<
+              string,
+              unknown
+            >
+          } catch {
+            throw new ToolArgError(
+              `Model emitted non-JSON tool args: ${call.function.arguments}`,
+              "Small models sometimes break structured output. Retry, or try a different model."
+            )
+          }
+          calls.push({
+            name: call.function.name,
+            rawArgs: call.function.arguments,
+            args,
+            id: call.id,
+            isInline: false,
+          })
+        }
+      } else if (reply.content) {
+        const inlineCalls = parseInlineToolCalls(reply.content)
+        for (const [i, c] of inlineCalls.entries()) {
+          calls.push({
+            name: c.name,
+            rawArgs: c.rawArgs,
+            args: c.args,
+            id: `inline-${Date.now()}-${i}`,
+            isInline: true,
+          })
         }
       }
-      ensureFits(first.usage)
-      let cutOff = first.choices[0].finish_reason === "length"
-      const msg = first.choices[0].message
-      let answer = ""
-      let retried = false
-      // How many tool rounds ran: 0 for a direct answer, up to
-      // `MAX_TOOL_ROUNDS`.
-      let rounds = 0
-      // The model's last raw reply, kept so a failed turn can show what
-      // the model actually wrote instead of a generic error.
-      let lastRaw = ""
-      // What the turn's last call carried, for its breakdown: the tool
-      // definitions unless it couldn't search, plus any note added to it.
-      let finalCallSentTools = true
-      let finalCallNote = ""
-      // One entry per executed call: the SERP link captured from
-      // `search_metadata` before it was stripped from the model's view.
-      const toolSearchUrls: Array<string | null> = []
-      // NOTE: usage from the final call is ground truth: LM Studio's
-      //       own tokenizer, not the cl100k estimate. `usages` collects
-      //       every completion so the turn total can be summed as well.
-      let finalUsage = first.usage
-      const usages: Array<typeof first.usage> = [first.usage]
+      return calls
+    }
+    const resolvedCalls = readCalls(msg)
 
-      // WHY: collect every tool call the model emitted this turn. You
-      //      accept two shapes: the structured `tool_calls` field
-      //      (OpenAI-compat) and inline `<tool_call>` XML used by some
-      //      open models. Zero calls means the model answered directly.
-      type ResolvedCall = {
-        name: string
-        rawArgs: string
-        args: Record<string, unknown>
-        id: string
-        isInline: boolean
-      }
-      const readCalls = (reply: typeof msg): Array<ResolvedCall> => {
-        const calls: Array<ResolvedCall> = []
-        if (reply.tool_calls && reply.tool_calls.length > 0) {
-          for (const call of reply.tool_calls) {
-            if (call.type !== "function") {
-              throw new LmStudioError(
-                `Unexpected tool call type: ${call.type}`,
-                "The model returned a non-function tool call. This shouldn't happen with OpenAI-compat APIs."
-              )
-            }
-            let args: Record<string, unknown>
-            try {
-              args = JSON.parse(call.function.arguments) as Record<
-                string,
-                unknown
-              >
-            } catch {
+    if (resolvedCalls.length > 0) {
+      // WHY: validate + execute every call in parallel. This is the
+      //      same pattern OpenAI and Anthropic recommend. The model
+      //      asks for N things, you run them concurrently, then send
+      //      back N results in one shot.
+      setProgress(
+        progressId,
+        "tools",
+        resolvedCalls.map((c) => c.name).join(" + ")
+      )
+      // Execute one round of tool calls and append the assistant turn and
+      // the tool results to `messages`. Runs once per round of the loop.
+      let roundNo = 0
+      const runToolRound = async (calls: Array<ResolvedCall>) => {
+        roundNo += 1
+        const round = roundNo
+        // NOTE: the phase timer wraps the whole batch. Parallel calls
+        //       overlap, so summing per-call durations would report more
+        //       time than actually passed. Each call's own duration still
+        //       ships as `serpApiMs`.
+        const toolPhaseStart = performance.now()
+        const executed = await Promise.all(
+          calls.map(async (call) => {
+            const validated = validateToolArgs(call.name, call.args)
+            // `validateToolArgs` already rejected unknown tools, so the
+            // guard here is for the type narrowing, not a second check.
+            if (!isRestrictorTool(call.name)) {
               throw new ToolArgError(
-                `Model emitted non-JSON tool args: ${call.function.arguments}`,
-                "Small models sometimes break structured output. Retry, or try a different model."
+                `Unknown tool: ${call.name}`,
+                "The model picked a tool the server doesn't know about."
               )
             }
-            calls.push({
-              name: call.function.name,
-              rawArgs: call.function.arguments,
-              args,
-              id: call.id,
-              isInline: false,
-            })
-          }
-        } else if (reply.content) {
-          const inlineCalls = parseInlineToolCalls(reply.content)
-          for (const [i, c] of inlineCalls.entries()) {
-            calls.push({
-              name: c.name,
-              rawArgs: c.rawArgs,
-              args: c.args,
-              id: `inline-${Date.now()}-${i}`,
-              isInline: true,
-            })
-          }
-        }
-        return calls
-      }
-      const resolvedCalls = readCalls(msg)
+            // `restrictor` records which restrictor string actually
+            // produced `response`. It changes if the Finance fallback
+            // below pivots the call to google_search.
+            let restrictor = restrictorFor(call.name, toolOutput)
+            // SerpApi searches this call spends: 2 with the fallback below.
+            let searches = 1
+            const execStart = performance.now()
+            let { payload: response, searchUrl } = await executeTool(
+              call.name,
+              validated,
+              toolOutput
+            )
+            let execMs = performance.now() - execStart
 
-      if (resolvedCalls.length > 0) {
-        // WHY: validate + execute every call in parallel. This is the
-        //      same pattern OpenAI and Anthropic recommend. The model
-        //      asks for N things, you run them concurrently, then send
-        //      back N results in one shot.
-        setProgress(
-          progressId,
-          "tools",
-          resolvedCalls.map((c) => c.name).join(" + ")
+            // WHY: graceful degradation for Finance. When SerpApi has
+            //      no quote for a symbol the restricted response is
+            //      missing `summary.title`/`summary.price` and ships
+            //      an empty stats list. Pivoting to google_search with
+            //      the same query gives the model real data to answer
+            //      from instead of a blank object.
+            if (
+              call.name === "google_finance_search" &&
+              isEmptyFinanceResponse(response)
+            ) {
+              const query = String(validated.query ?? "")
+              if (query) {
+                const fbStart = performance.now()
+                const fallback = await executeTool(
+                  "google_search",
+                  { query },
+                  toolOutput
+                )
+                execMs += performance.now() - fbStart
+                searches = 2
+                restrictor = restrictorFor("google_search", toolOutput)
+                searchUrl = fallback.searchUrl
+                const note = `Google Finance had no direct quote for "${query}". These are web search results instead.`
+                response =
+                  typeof fallback.payload === "string"
+                    ? `> ${note}\n\n${fallback.payload}`
+                    : {
+                        ...(fallback.payload as Record<string, JsonValue>),
+                        fallback_from: "google_finance_search",
+                        note,
+                      }
+              }
+            }
+
+            return {
+              call,
+              validated,
+              response,
+              restrictor,
+              execMs,
+              searchUrl,
+              searches,
+            }
+          })
         )
-        // Execute one round of tool calls and append the assistant turn and
-        // the tool results to `messages`. Runs once per round of the loop.
-        let roundNo = 0
-        const runToolRound = async (calls: Array<ResolvedCall>) => {
-          roundNo += 1
-          const round = roundNo
-          // NOTE: the phase timer wraps the whole batch. Parallel calls
-          //       overlap, so summing per-call durations would report more
-          //       time than actually passed. Each call's own duration still
-          //       ships as `serpApiMs`.
-          const toolPhaseStart = performance.now()
-          const executed = await Promise.all(
-            calls.map(async (call) => {
-              const validated = validateToolArgs(call.name, call.args)
-              // `validateToolArgs` already rejected unknown tools, so the
-              // guard here is for the type narrowing, not a second check.
-              if (!isRestrictorTool(call.name)) {
-                throw new ToolArgError(
-                  `Unknown tool: ${call.name}`,
-                  "The model picked a tool the server doesn't know about."
-                )
-              }
-              // `restrictor` records which restrictor string actually
-              // produced `response`. It changes if the Finance fallback
-              // below pivots the call to google_search.
-              let restrictor = restrictorFor(call.name, toolOutput)
-              // SerpApi searches this call spends: 2 with the fallback below.
-              let searches = 1
-              const execStart = performance.now()
-              let { payload: response, searchUrl } = await executeTool(
-                call.name,
-                validated,
-                toolOutput
-              )
-              let execMs = performance.now() - execStart
+        phases.toolExecutionMs += Math.round(performance.now() - toolPhaseStart)
 
-              // WHY: graceful degradation for Finance. When SerpApi has
-              //      no quote for a symbol the restricted response is
-              //      missing `summary.title`/`summary.price` and ships
-              //      an empty stats list. Pivoting to google_search with
-              //      the same query gives the model real data to answer
-              //      from instead of a blank object.
-              if (
-                call.name === "google_finance_search" &&
-                isEmptyFinanceResponse(response)
-              ) {
-                const query = String(validated.query ?? "")
-                if (query) {
-                  const fbStart = performance.now()
-                  const fallback = await executeTool(
-                    "google_search",
-                    { query },
-                    toolOutput
-                  )
-                  execMs += performance.now() - fbStart
-                  searches = 2
-                  restrictor = restrictorFor("google_search", toolOutput)
-                  searchUrl = fallback.searchUrl
-                  const note = `Google Finance had no direct quote for "${query}". These are web search results instead.`
-                  response =
-                    typeof fallback.payload === "string"
-                      ? `> ${note}\n\n${fallback.payload}`
-                      : {
-                          ...(fallback.payload as Record<string, JsonValue>),
-                          fallback_from: "google_finance_search",
-                          note,
-                        }
-                }
-              }
-
-              return {
-                call,
-                validated,
-                response,
-                restrictor,
-                execMs,
-                searchUrl,
-                searches,
-              }
-            })
-          )
-          phases.toolExecutionMs += Math.round(
-            performance.now() - toolPhaseStart
-          )
-
-          for (const r of executed) {
-            const responseTokens = countTokens(r.response)
-            toolCalls.push({
-              name: r.call.name,
-              args: r.validated,
-              restrictor: r.restrictor,
-              output: toolOutput,
-              response: r.response,
-              tokens: responseTokens,
-              serpApiMs: Math.round(r.execMs),
-              round,
-              searches: r.searches,
-            })
-            toolSearchUrls.push(r.searchUrl)
-            breakdown.tool_call += countTokens(r.call.rawArgs)
-            breakdown.tool_result += responseTokens
-          }
-
-          // WHY: rebuild the assistant turn so the second completion
-          //      sees a clean structured `tool_calls` array, no matter
-          //      whether the model originally used the native field or
-          //      inline XML. This way the rest of your code only handles
-          //      one shape.
-          messages.push({
-            role: "assistant",
-            content: null,
-            tool_calls: calls.map((c) => ({
-              id: c.id,
-              type: "function",
-              function: { name: c.name, arguments: c.rawArgs },
-            })),
+        for (const r of executed) {
+          const responseTokens = countTokens(r.response)
+          toolCalls.push({
+            name: r.call.name,
+            args: r.validated,
+            restrictor: r.restrictor,
+            output: toolOutput,
+            response: r.response,
+            tokens: responseTokens,
+            serpApiMs: Math.round(r.execMs),
+            round,
+            searches: r.searches,
           })
-          for (const [i, r] of executed.entries()) {
-            messages.push({
-              role: "tool",
-              tool_call_id: calls[i].id,
-              // Markdown goes to the model as-is; JSON is serialised.
-              content:
-                typeof r.response === "string"
-                  ? r.response
-                  : JSON.stringify(r.response),
-            })
-          }
+          toolSearchUrls.push(r.searchUrl)
+          breakdown.tool_call += countTokens(r.call.rawArgs)
+          breakdown.tool_result += responseTokens
         }
 
-        await runToolRound(resolvedCalls)
-
-        // WHY: the tools stay on every call but the last (see
-        //      `followUpParams`), so LM Studio parses a second search into
-        //      `tool_calls` instead of leaving it in the text.
-        // Which call wrote the loop's last reply. Set inside `complete`,
-        // which TypeScript can't follow: no narrowing.
-        let lastCall = "auto" as "auto" | "none" | "fallback"
-        const loop = await runToolLoop({
-          maxToolRounds: MAX_TOOL_ROUNDS,
-          complete: async (toolChoice) => {
-            setProgress(progressId, "answer")
-            lastCall = toolChoice
-            const t = performance.now()
-            let reply: typeof first
-            try {
-              reply = await createCompletion(
-                followUpParams(model, messages, toolChoice)
-              )
-            } catch (err) {
-              const m = err instanceof Error ? err.message : String(err)
-              if (!isUnparseableReply(m)) {
-                throw new LmStudioError(
-                  `LM Studio answer call failed: ${m}`,
-                  answerCallHint(m)
-                )
-              }
-              // WHY: LM Studio could not parse the reply, twice (see
-              //      `createCompletion`). The turn already has search
-              //      results, so ask for the answer from them as plain
-              //      text, with no tools and no tool call to parse.
-              devWarn(
-                "[runQuery] LM Studio could not parse the reply again, asking for the answer from the results:",
-                m
-              )
-              lastCall = "fallback"
-              retried = true
-              try {
-                reply = await createCompletion({
-                  model,
-                  messages: answerFromResultsMessages(messages, toolCalls),
-                  temperature: 0.3,
-                  max_tokens: MAX_COMPLETION_TOKENS,
-                })
-              } catch (fallbackErr) {
-                const fm =
-                  fallbackErr instanceof Error
-                    ? fallbackErr.message
-                    : String(fallbackErr)
-                throw new LmStudioError(
-                  `LM Studio answer call failed: ${fm}`,
-                  answerCallHint(fm)
-                )
-              }
-            }
-            phases.secondInferenceMs += Math.round(performance.now() - t)
-            ensureFits(reply.usage)
-            usages.push(reply.usage)
-            return reply
-          },
-          readCalls: (reply) => readCalls(reply.choices[0].message),
-          runRound: async (calls) => {
-            setProgress(
-              progressId,
-              "tools",
-              calls.map((c) => c.name).join(" + ")
-            )
-            await runToolRound(calls)
-          },
-          onRoundFailed: (err) =>
-            devWarn(
-              "[runQuery] a follow-up search failed, asking for the answer instead:",
-              err instanceof Error ? err.message : String(err)
-            ),
-        })
-        rounds = loop.rounds
-        if (lastCall !== "auto") {
-          finalCallSentTools = false
-          finalCallNote = lastCall === "none" ? FINAL_ROUND_NOTE : ANSWER_NUDGE
-        }
-        lastRaw = loop.last.choices[0].message.content ?? ""
-        cutOff = loop.last.choices[0].finish_reason === "length"
-        answer = stripInlineToolCalls(lastRaw)
-        finalUsage = loop.last.usage
-
-        // WHY: an empty answer (or one that still ends in a tool call)
-        //      gets one retry, with the searches as plain text (see
-        //      `answerFromResultsMessages`). It goes through a throwaway
-        //      `retryMessages` so it never pollutes the history you return
-        //      to the client.
-        if (
-          lastCall !== "fallback" &&
-          (answer.length === 0 || hasInlineToolCall(lastRaw))
-        ) {
-          devWarn(
-            "[runQuery] answer call wrote no answer, retrying. Raw content:",
-            JSON.stringify(lastRaw)
-          )
-          retried = true
-          finalCallSentTools = false
-          finalCallNote = ANSWER_NUDGE
-          const retryMessages = answerFromResultsMessages(messages, toolCalls)
-          const retryStart = performance.now()
-          const retry = await createCompletion({
-            model,
-            messages: retryMessages,
-            temperature: 0.3,
-            max_tokens: MAX_COMPLETION_TOKENS,
-          })
-          phases.secondInferenceMs += Math.round(performance.now() - retryStart)
-          ensureFits(retry.usage)
-          cutOff = retry.choices[0].finish_reason === "length"
-          const retryRaw = retry.choices[0].message.content ?? ""
-          answer = stripInlineToolCalls(retryRaw)
-          finalUsage = retry.usage
-          usages.push(retry.usage)
-          lastRaw = retryRaw
-          if (answer.length === 0 || hasInlineToolCall(retryRaw)) {
-            devWarn(
-              "[runQuery] retry wrote no answer either. Raw content:",
-              JSON.stringify(retryRaw)
-            )
-            answer = ""
-          }
-        }
-      } else {
-        // No tool call: direct answer. Strip any stray XML in case the
-        // model emitted an unparseable fragment.
-        answer = stripInlineToolCalls(msg.content ?? "")
-      }
-
-      // WHY: last-resort fallback. If the retry above also came back
-      //      empty, tell the user explicitly instead of rendering a
-      //      blank message.
-      const answerMissing = answer.length === 0
-      if (answerMissing) {
-        answer = missingAnswerNotice(lastRaw, rounds, cutOff)
-      }
-
-      // WHY: push the final assistant answer onto the conversation so
-      //      it appears in history on the next turn. Otherwise the
-      //      model will forget what it just told the user. Sanitise
-      //      first: the occasional invalid UTF-8 byte will crash the
-      //      receiving chat template on the next request.
-      if (!answerMissing) {
+        // WHY: rebuild the assistant turn so the second completion
+        //      sees a clean structured `tool_calls` array, no matter
+        //      whether the model originally used the native field or
+        //      inline XML. This way the rest of your code only handles
+        //      one shape.
         messages.push({
           role: "assistant",
-          content: sanitizeForHistory(answer),
+          content: null,
+          tool_calls: calls.map((c) => ({
+            id: c.id,
+            type: "function",
+            function: { name: c.name, arguments: c.rawArgs },
+          })),
         })
-      }
-
-      // The breakdown describes the turn's last call: no tool definitions
-      // when it couldn't search, and the note it carried, if any.
-      if (!finalCallSentTools) breakdown.tool_definitions = 0
-      if (finalCallNote) breakdown.system_prompt += countTokens(finalCallNote)
-      breakdown.final_response = countTokens(answer)
-      // WHY: one source entry per tool call that returned a SerpApi
-      //      URL, labelled so you can tell parallel calls apart in the
-      //      Sources panel (e.g. "Finance · AAPL" vs "Finance · TSLA").
-      const toolSources: Array<{ url: string; label: string }> = []
-      for (let i = 0; i < toolSearchUrls.length; i++) {
-        const url = toolSearchUrls[i]
-        if (url) {
-          toolSources.push({
-            url,
-            label: `SerpApi · ${toolCallLabel(toolCalls[i])}`,
+        for (const [i, r] of executed.entries()) {
+          messages.push({
+            role: "tool",
+            tool_call_id: calls[i].id,
+            // Markdown goes to the model as-is; JSON is serialised.
+            content:
+              typeof r.response === "string"
+                ? r.response
+                : JSON.stringify(r.response),
           })
         }
       }
-      const sources = extractSources(answer, toolSources)
-      const elapsedMs = Math.round(performance.now() - start)
-      const exactUsage: ExactUsage | null = finalUsage
-        ? toExactUsage(finalUsage)
-        : null
-      const totalUsage = sumUsage(usages)
 
-      await appendBenchmarkLog({
-        timestamp: new Date().toISOString(),
-        query: redactSecrets(question),
-        model,
-        // NOTE: kept as single-value for backward compatibility with
-        //       any older analysis scripts you have lying around;
-        //       `tools_called` carries the full array.
-        tool_called: toolCalls[0]?.name ?? null,
-        tools_called: toolCalls.map((c) => c.name),
-        tokens: {
-          tool_definitions: breakdown.tool_definitions,
-          system_prompt: breakdown.system_prompt,
-          user_message: breakdown.user_message,
-          tool_call: breakdown.tool_call,
-          tool_result: breakdown.tool_result,
-          final_response: breakdown.final_response,
-          total: contextTotal(breakdown),
+      await runToolRound(resolvedCalls)
+
+      // WHY: the tools stay on every call but the last (see
+      //      `followUpParams`), so LM Studio parses a second search into
+      //      `tool_calls` instead of leaving it in the text.
+      // Which call wrote the loop's last reply. Set inside `complete`,
+      // which TypeScript can't follow: no narrowing.
+      let lastCall = "auto" as "auto" | "none" | "fallback"
+      const loop = await runToolLoop({
+        maxToolRounds: MAX_TOOL_ROUNDS,
+        complete: async (toolChoice) => {
+          setProgress(progressId, "answer")
+          lastCall = toolChoice
+          const t = performance.now()
+          let reply: typeof first
+          try {
+            reply = await createCompletion(
+              followUpParams(model, messages, toolChoice)
+            )
+          } catch (err) {
+            const m = err instanceof Error ? err.message : String(err)
+            if (!isUnparseableReply(m)) {
+              throw new LmStudioError(
+                `LM Studio answer call failed: ${m}`,
+                answerCallHint(m)
+              )
+            }
+            // WHY: LM Studio could not parse the reply, twice (see
+            //      `createCompletion`). The turn already has search
+            //      results, so ask for the answer from them as plain
+            //      text, with no tools and no tool call to parse.
+            devWarn(
+              "[runQuery] LM Studio could not parse the reply again, asking for the answer from the results:",
+              m
+            )
+            lastCall = "fallback"
+            retried = true
+            try {
+              reply = await createCompletion({
+                model,
+                messages: answerFromResultsMessages(messages, toolCalls),
+                temperature: 0.3,
+                max_tokens: MAX_COMPLETION_TOKENS,
+              })
+            } catch (fallbackErr) {
+              const fm =
+                fallbackErr instanceof Error
+                  ? fallbackErr.message
+                  : String(fallbackErr)
+              throw new LmStudioError(
+                `LM Studio answer call failed: ${fm}`,
+                answerCallHint(fm)
+              )
+            }
+          }
+          phases.secondInferenceMs += Math.round(performance.now() - t)
+          ensureFits(reply.usage)
+          usages.push(reply.usage)
+          return reply
         },
-        exact_usage: exactUsage,
-        sources_count: sources.length,
-        time_seconds: Number((elapsedMs / 1000).toFixed(2)),
-        phases,
-        success: !answerMissing,
-        response: answer,
+        readCalls: (reply) => readCalls(reply.choices[0].message),
+        runRound: async (calls) => {
+          setProgress(progressId, "tools", calls.map((c) => c.name).join(" + "))
+          await runToolRound(calls)
+        },
+        onRoundFailed: (err) =>
+          devWarn(
+            "[runQuery] a follow-up search failed, asking for the answer instead:",
+            err instanceof Error ? err.message : String(err)
+          ),
       })
-
-      // NOTE: "conversation so far": what the next call will carry
-      //       before you append the next user message. Mirrors LM
-      //       Studio's own conversation-tokens counter.
-      // WHY: a turn with no answer keeps its question, with a short reply
-      //      in place of the answer. Kept whole, the notice read as the
-      //      model's own answer. Dropped, a follow-up lost its subject:
-      //      after two such turns, Bonsai 27B asked which product "Can you
-      //      check their prices please" meant (2026-10-12).
-      const nextHistory = historyAfterTurn(
-        messages,
-        trimmedHistory.length,
-        !answerMissing
-      )
-      const conversationTokens =
-        toolsTokens +
-        systemTokens +
-        countTokens(sanitizeHistoryForReplay(nextHistory))
-
-      return {
-        ok: true,
-        answer,
-        breakdown,
-        exactUsage,
-        totalUsage,
-        toolCalls,
-        sources,
-        elapsedMs,
-        phases,
-        // NOTE: ship everything except the system prompt (index 0)
-        //       back to the client. It'll send it as `history` on
-        //       the next call.
-        messages: nextHistory,
-        trimmedTurns,
-        conversationTokens,
-        loadedContext,
-        appliedContext,
-        retried,
-        cutOff,
-        answerMissing,
-        toolRounds: rounds,
-        rawReply: answerMissing ? lastRaw || null : null,
+      rounds = loop.rounds
+      if (lastCall !== "auto") {
+        finalCallSentTools = false
+        finalCallNote = lastCall === "none" ? FINAL_ROUND_NOTE : ANSWER_NUDGE
       }
-    } catch (err) {
-      const elapsedMs = Math.round(performance.now() - start)
-      return {
-        ok: false,
-        answer: formatAgentError(err),
-        breakdown: emptyBreakdown(),
-        exactUsage: null,
-        totalUsage: null,
-        toolCalls,
-        sources: [],
-        elapsedMs,
-        phases: emptyPhases(),
-        // WHY: preserve the existing history on error. You don't
-        //      want the user's next attempt to lose all the prior
-        //      turns just because one call failed.
-        messages: history as Array<ChatCompletionMessageParam>,
-        trimmedTurns: 0,
-        conversationTokens: 0,
-        loadedContext,
-        appliedContext,
-        retried: false,
-        cutOff: false,
-        answerMissing: false,
-        toolRounds: 0,
-        rawReply: null,
+      lastRaw = loop.last.choices[0].message.content ?? ""
+      cutOff = loop.last.choices[0].finish_reason === "length"
+      answer = stripInlineToolCalls(lastRaw)
+      finalUsage = loop.last.usage
+
+      // WHY: an empty answer (or one that still ends in a tool call)
+      //      gets one retry, with the searches as plain text (see
+      //      `answerFromResultsMessages`). It goes through a throwaway
+      //      `retryMessages` so it never pollutes the history you return
+      //      to the client.
+      if (
+        lastCall !== "fallback" &&
+        (answer.length === 0 || hasInlineToolCall(lastRaw))
+      ) {
+        devWarn(
+          "[runQuery] answer call wrote no answer, retrying. Raw content:",
+          JSON.stringify(lastRaw)
+        )
+        retried = true
+        finalCallSentTools = false
+        finalCallNote = ANSWER_NUDGE
+        const retryMessages = answerFromResultsMessages(messages, toolCalls)
+        const retryStart = performance.now()
+        const retry = await createCompletion({
+          model,
+          messages: retryMessages,
+          temperature: 0.3,
+          max_tokens: MAX_COMPLETION_TOKENS,
+        })
+        phases.secondInferenceMs += Math.round(performance.now() - retryStart)
+        ensureFits(retry.usage)
+        cutOff = retry.choices[0].finish_reason === "length"
+        const retryRaw = retry.choices[0].message.content ?? ""
+        answer = stripInlineToolCalls(retryRaw)
+        finalUsage = retry.usage
+        usages.push(retry.usage)
+        lastRaw = retryRaw
+        if (answer.length === 0 || hasInlineToolCall(retryRaw)) {
+          devWarn(
+            "[runQuery] retry wrote no answer either. Raw content:",
+            JSON.stringify(retryRaw)
+          )
+          answer = ""
+        }
       }
-    } finally {
-      if (progressId) queryProgress.delete(progressId)
-      endQuery(model)
+    } else {
+      // No tool call: direct answer. Strip any stray XML in case the
+      // model emitted an unparseable fragment.
+      answer = stripInlineToolCalls(msg.content ?? "")
     }
+
+    // WHY: last-resort fallback. If the retry above also came back
+    //      empty, tell the user explicitly instead of rendering a
+    //      blank message.
+    const answerMissing = answer.length === 0
+    if (answerMissing) {
+      answer = missingAnswerNotice(lastRaw, rounds, cutOff)
+    }
+
+    // WHY: push the final assistant answer onto the conversation so
+    //      it appears in history on the next turn. Otherwise the
+    //      model will forget what it just told the user. Sanitise
+    //      first: the occasional invalid UTF-8 byte will crash the
+    //      receiving chat template on the next request.
+    if (!answerMissing) {
+      messages.push({
+        role: "assistant",
+        content: sanitizeForHistory(answer),
+      })
+    }
+
+    // The breakdown describes the turn's last call: no tool definitions
+    // when it couldn't search, and the note it carried, if any.
+    if (!finalCallSentTools) breakdown.tool_definitions = 0
+    if (finalCallNote) breakdown.system_prompt += countTokens(finalCallNote)
+    breakdown.final_response = countTokens(answer)
+    // WHY: one source entry per tool call that returned a SerpApi
+    //      URL, labelled so you can tell parallel calls apart in the
+    //      Sources panel (e.g. "Finance · AAPL" vs "Finance · TSLA").
+    const toolSources: Array<{ url: string; label: string }> = []
+    for (let i = 0; i < toolSearchUrls.length; i++) {
+      const url = toolSearchUrls[i]
+      if (url) {
+        toolSources.push({
+          url,
+          label: `SerpApi · ${toolCallLabel(toolCalls[i])}`,
+        })
+      }
+    }
+    const sources = extractSources(answer, toolSources)
+    const elapsedMs = Math.round(performance.now() - start)
+    const exactUsage: ExactUsage | null = finalUsage
+      ? toExactUsage(finalUsage)
+      : null
+    const totalUsage = sumUsage(usages)
+
+    await appendBenchmarkLog({
+      timestamp: new Date().toISOString(),
+      query: redactSecrets(question),
+      model,
+      // NOTE: kept as single-value for backward compatibility with
+      //       any older analysis scripts you have lying around;
+      //       `tools_called` carries the full array.
+      tool_called: toolCalls[0]?.name ?? null,
+      tools_called: toolCalls.map((c) => c.name),
+      tokens: {
+        tool_definitions: breakdown.tool_definitions,
+        system_prompt: breakdown.system_prompt,
+        user_message: breakdown.user_message,
+        tool_call: breakdown.tool_call,
+        tool_result: breakdown.tool_result,
+        final_response: breakdown.final_response,
+        total: contextTotal(breakdown),
+      },
+      exact_usage: exactUsage,
+      sources_count: sources.length,
+      time_seconds: Number((elapsedMs / 1000).toFixed(2)),
+      phases,
+      success: !answerMissing,
+      response: answer,
+    })
+
+    // NOTE: "conversation so far": what the next call will carry
+    //       before you append the next user message. Mirrors LM
+    //       Studio's own conversation-tokens counter.
+    // WHY: a turn with no answer keeps its question, with a short reply
+    //      in place of the answer. Kept whole, the notice read as the
+    //      model's own answer. Dropped, a follow-up lost its subject:
+    //      after two such turns, Bonsai 27B asked which product "Can you
+    //      check their prices please" meant (2026-10-12).
+    const nextHistory = historyAfterTurn(
+      messages,
+      trimmedHistory.length,
+      !answerMissing
+    )
+    const conversationTokens =
+      toolsTokens +
+      systemTokens +
+      countTokens(sanitizeHistoryForReplay(nextHistory))
+
+    return {
+      ok: true,
+      answer,
+      breakdown,
+      exactUsage,
+      totalUsage,
+      toolCalls,
+      sources,
+      elapsedMs,
+      phases,
+      // NOTE: ship everything except the system prompt (index 0)
+      //       back to the client. It'll send it as `history` on
+      //       the next call.
+      messages: nextHistory,
+      trimmedTurns,
+      conversationTokens,
+      loadedContext,
+      appliedContext,
+      retried,
+      cutOff,
+      answerMissing,
+      toolRounds: rounds,
+      rawReply: answerMissing ? lastRaw || null : null,
+    }
+  } catch (err) {
+    const elapsedMs = Math.round(performance.now() - start)
+    return {
+      ok: false,
+      answer: formatAgentError(err),
+      breakdown: emptyBreakdown(),
+      exactUsage: null,
+      totalUsage: null,
+      toolCalls,
+      sources: [],
+      elapsedMs,
+      phases: emptyPhases(),
+      // WHY: preserve the existing history on error. You don't
+      //      want the user's next attempt to lose all the prior
+      //      turns just because one call failed.
+      messages: history as Array<ChatCompletionMessageParam>,
+      trimmedTurns: 0,
+      conversationTokens: 0,
+      loadedContext,
+      appliedContext,
+      retried: false,
+      cutOff: false,
+      answerMissing: false,
+      toolRounds: 0,
+      rawReply: null,
+    }
+  } finally {
+    if (progressId) queryProgress.delete(progressId)
+    endQuery(model)
   }
-)
+}
