@@ -2345,11 +2345,11 @@ export const fetchFullResponse = createServerOnlyFn(
 // room for a follow-up search or two without letting a model loop.
 const MAX_TOOL_ROUNDS = 3
 
-// WHY: sent with the call that follows the last round. That call sets
-//      `tool_choice: "none"`, and LM Studio then leaves the tool
-//      definitions out of the prompt (measured on Gemma 4 12B and Qwen 3.8
-//      27B, 2026-10-09). With no word about it, Qwen 3.8 and Bonsai 27B
-//      wrote yet another search as text, and the turn ended with no answer.
+// WHY: sent with the call that follows the last round, which goes without
+//      tools. (With `tool_choice: "none"` LM Studio leaves them out of the
+//      prompt too, measured on Gemma 4 12B and Qwen 3.8 27B, 2026-10-09.)
+//      With no word about it, Qwen 3.8 and Bonsai 27B wrote yet another
+//      search as text, and the turn ended with no answer.
 const FINAL_ROUND_NOTE = `You have used all ${MAX_TOOL_ROUNDS} search rounds, so you can't search again. Answer now from the search results above. If they don't contain the answer, say what you could not find.`
 
 // Stands in for the answer in the history of a turn that ended without one.
@@ -2448,8 +2448,9 @@ export function missingAnswerNotice(
 /**
  * The agent loop after the first tool round: ask the model again with the
  * tools still available, run the searches it asks for, and repeat until it
- * answers. After `maxToolRounds` rounds the next call sets `tool_choice:
- * "none"`, the same rule as the last round of LM Studio's `.act()`.
+ * answers. After `maxToolRounds` rounds the next call gets `"none"`, and
+ * `runAgentTurn` sends it without tools, the same rule as the last round of
+ * LM Studio's `.act()`.
  *
  * A later round that fails (unreadable arguments, a SerpApi error) ends the
  * loop and keeps the results so far: one bad follow-up must not sink a turn
@@ -2947,36 +2948,78 @@ export const runAgentTurn = createServerOnlyFn(
         //      search into `tool_calls` instead of leaving it in the text.
         //      Temperature goes up a bit, since most of these calls write
         //      the answer.
-        // Set inside `complete`, which TypeScript can't follow: no narrowing.
-        let lastToolChoice = "auto" as "auto" | "none"
+        // Which call wrote the loop's last reply. Set inside `complete`,
+        // which TypeScript can't follow: no narrowing.
+        let lastCall = "auto" as "auto" | "none" | "fallback"
         const loop = await runToolLoop({
           maxToolRounds: MAX_TOOL_ROUNDS,
           complete: async (toolChoice) => {
             setProgress(progressId, "answer")
-            lastToolChoice = toolChoice
+            lastCall = toolChoice
             const t = performance.now()
             let reply: typeof first
             try {
-              reply = await createCompletion({
-                model,
-                messages:
-                  toolChoice === "none"
-                    ? [
+              reply = await createCompletion(
+                toolChoice === "none"
+                  ? // WHY: no tools at all on the last call, as in the last
+                    //      round of LM Studio's `.act()`. The prompt is the
+                    //      same as with `tool_choice: "none"`, which LM
+                    //      Studio sends without them, and a tool call the
+                    //      model writes anyway comes back as text, which
+                    //      the retry below handles.
+                    {
+                      model,
+                      messages: [
                         ...messages,
                         { role: "system", content: FINAL_ROUND_NOTE },
-                      ]
-                    : messages,
-                tools: TOOLS,
-                tool_choice: toolChoice,
-                temperature: 0.3,
-                max_tokens: MAX_COMPLETION_TOKENS,
-              })
+                      ],
+                      temperature: 0.3,
+                      max_tokens: MAX_COMPLETION_TOKENS,
+                    }
+                  : {
+                      model,
+                      messages,
+                      tools: TOOLS,
+                      tool_choice: "auto",
+                      temperature: 0.3,
+                      max_tokens: MAX_COMPLETION_TOKENS,
+                    }
+              )
             } catch (err) {
               const m = err instanceof Error ? err.message : String(err)
-              throw new LmStudioError(
-                `LM Studio answer call failed: ${m}`,
-                answerCallHint(m)
+              if (!isUnparseableReply(m)) {
+                throw new LmStudioError(
+                  `LM Studio answer call failed: ${m}`,
+                  answerCallHint(m)
+                )
+              }
+              // WHY: LM Studio could not parse the reply, twice (see
+              //      `createCompletion`). The turn already has search
+              //      results, so ask for the answer from them as plain
+              //      text, with no tools and no tool call to parse.
+              devWarn(
+                "[runQuery] LM Studio could not parse the reply again, asking for the answer from the results:",
+                m
               )
+              lastCall = "fallback"
+              retried = true
+              try {
+                reply = await createCompletion({
+                  model,
+                  messages: answerFromResultsMessages(messages, toolCalls),
+                  temperature: 0.3,
+                  max_tokens: MAX_COMPLETION_TOKENS,
+                })
+              } catch (fallbackErr) {
+                const fm =
+                  fallbackErr instanceof Error
+                    ? fallbackErr.message
+                    : String(fallbackErr)
+                throw new LmStudioError(
+                  `LM Studio answer call failed: ${fm}`,
+                  answerCallHint(fm)
+                )
+              }
             }
             phases.secondInferenceMs += Math.round(performance.now() - t)
             ensureFits(reply.usage)
@@ -2999,9 +3042,9 @@ export const runAgentTurn = createServerOnlyFn(
             ),
         })
         rounds = loop.rounds
-        if (lastToolChoice === "none") {
+        if (lastCall !== "auto") {
           finalCallSentTools = false
-          finalCallNote = FINAL_ROUND_NOTE
+          finalCallNote = lastCall === "none" ? FINAL_ROUND_NOTE : ANSWER_NUDGE
         }
         lastRaw = loop.last.choices[0].message.content ?? ""
         cutOff = loop.last.choices[0].finish_reason === "length"
@@ -3013,7 +3056,10 @@ export const runAgentTurn = createServerOnlyFn(
         //      `answerFromResultsMessages`). It goes through a throwaway
         //      `retryMessages` so it never pollutes the history you return
         //      to the client.
-        if (answer.length === 0 || hasInlineToolCall(lastRaw)) {
+        if (
+          lastCall !== "fallback" &&
+          (answer.length === 0 || hasInlineToolCall(lastRaw))
+        ) {
           devWarn(
             "[runQuery] answer call wrote no answer, retrying. Raw content:",
             JSON.stringify(lastRaw)
