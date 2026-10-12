@@ -7,7 +7,7 @@ import cl100k_base from "js-tiktoken/ranks/cl100k_base"
 // runs; cl100k is a consistent ruler for comparing segments offline.
 //
 // WHY: a `.server.ts` file. TanStack Start's import protection removes
-//      these files from the client build outright, so the 5 MB rank table
+//      these files from the client build outright, so the 1 MB rank table
 //      can never reach the browser, however the bundler tree-shakes the
 //      modules that import it. The `lite` entry plus one rank file keeps
 //      the server chunk small too; the package's main entry pulls in every

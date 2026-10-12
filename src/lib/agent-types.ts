@@ -2,7 +2,7 @@
 // Everything in this file is safe to import from the browser: plain types
 // and a few constant tables the chat and benchmark pages render from.
 //
-// WHY: `src/server/agent.ts` also pulls in js-tiktoken (a 5.6 MB encoder
+// WHY: `src/server/agent.ts` also pulls in js-tiktoken (a 1 MB encoder
 //      table), the SerpApi SDK and the OpenAI client at module scope. A
 //      client component that value-imported a constant from that module
 //      dragged the whole thing into the browser bundle. Keeping the shared
@@ -15,9 +15,9 @@
  *
  * - `json`: the classic structured response (`output=json`), fetched with
  *   the SDK's `getJson`.
- * - `markdown`: SerpApi's Markdown output (`output=md`) with the same
- *   `json_restrictor` as JSON, so only the serialisation differs. See
- *   https://serpapi.com/markdown-output.
+ * - `markdown`: SerpApi's Markdown output (`output=md`) with its own
+ *   `json_restrictor` (`MARKDOWN_RESTRICTORS`), which keeps more fields at
+ *   about the same token count. See https://serpapi.com/markdown-output.
  * - `markdown-full`: the same Markdown output with no `json_restrictor`,
  *   so the model reads the complete document SerpApi renders.
  */

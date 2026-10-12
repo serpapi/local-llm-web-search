@@ -14,7 +14,7 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Lets you pick what the model reads as a tool result: SerpApi's JSON response, or its [Markdown output](https://serpapi.com/markdown-output) (`output=md`), with or without a restrictor.
 - Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then LM Studio's token count for the model's last call, split into its parts, and the time each phase took.
 - Lists every search result page the model used as a clickable source under the answer.
-- Validates tool arguments with Zod and returns errors that say what to do next.
+- Validates tool arguments with Zod. A bad argument ends the turn with an error that says what was wrong and what to try.
 - Keeps the SerpApi key on the server. It never ships in a client bundle.
 
 ## Requirements
@@ -189,7 +189,7 @@ There is no CI. Run `bun run typecheck`, `bun run lint` and `bun run test` befor
 | `src/server/restrictors.ts`   | The `json_restrictor` strings for the seven engines: `RESTRICTORS` for JSON, `MARKDOWN_RESTRICTORS` for Markdown.                                                              |
 | `src/server/chat.ts`          | Chat server functions. The session and the turn runner live in `chat-session.server.ts`.                                                                                       |
 | `src/server/bench.ts`         | Dev-only benchmark server functions and the saved-run schema. The runner lives in `bench-job.server.ts`.                                                                       |
-| `src/server/tokens.server.ts` | Token estimates with tiktoken's `cl100k_base`. The `.server.ts` suffix keeps the 5 MB rank table out of the client build.                                                      |
+| `src/server/tokens.server.ts` | Token estimates with tiktoken's `cl100k_base`. The `.server.ts` suffix keeps the 1 MB rank table out of the client build.                                                      |
 | `src/routes/index.tsx`        | Chat page, token breakdown sidebar and latency panel.                                                                                                                          |
 | `src/routes/bench.tsx`        | Benchmark page. Its components are in `src/components/bench/`.                                                                                                                 |
 | `src/lib/agent-types.ts`      | Types and constants shared by client and server. Client code imports from here, so the SDKs never reach the browser bundle.                                                    |
