@@ -188,6 +188,11 @@ const LM_STUDIO_DOWN_HINT =
 // How often the page checks on a running turn.
 const POLL_MS = 500
 
+// On the restrictor card's sizes, which compare two SerpApi responses
+// offline rather than report what LM Studio counted.
+const CL100K_NOTE =
+  "Counted with tiktoken's cl100k_base, as on /bench, so the full and filtered sizes use the same ruler. The model's own tokenizer counts a few percent more."
+
 function App() {
   const { models: availableModels, error: modelsError } = Route.useLoaderData()
   const queryClient = useQueryClient()
@@ -1045,7 +1050,7 @@ function BreakdownBody({
         modelContext={modelContext}
       />
       <StackedBar segments={orderedSegments} total={total} />
-      <SegmentList segments={orderedSegments} />
+      <SegmentList segments={orderedSegments} fitted={fit !== null} />
       <TurnSummary
         totalUsage={totalUsage}
         nextQuestionTokens={Math.round(conversationTokens * (fit?.ratio ?? 1))}
@@ -1267,7 +1272,15 @@ function StackedBar({
   )
 }
 
-function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
+// "~" marks an estimate. With LM Studio's usage, the output is its exact
+// count and the input parts are estimates scaled to its exact total.
+function SegmentList({
+  segments,
+  fitted,
+}: {
+  segments: Array<OrderedSegment>
+  fitted: boolean
+}) {
   return (
     <ul className="flex flex-col gap-1.5">
       {segments.map((seg) => {
@@ -1284,6 +1297,9 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
             />
             <span className="flex-1 truncate">{seg.label}</span>
             <span className="font-mono tabular-nums">
+              {seg.count > 0 && !(fitted && seg.key === "final_response")
+                ? "~"
+                : ""}
               {seg.count.toLocaleString()}
             </span>
             <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
@@ -1370,6 +1386,7 @@ function LatencyCard({ phases }: { phases: Phases }) {
 // costs one more search per tool call, so it is fetched only when the user
 // asks (`onMeasure`) and passed in via `fullFetch`. When the turn ran
 // without a restrictor the card just reports what the model received.
+// Both sizes are cl100k counts, the ruler /bench uses, not LM Studio's.
 function JsonRestrictorCard({
   toolCalls,
   fullFetch,
@@ -1382,7 +1399,6 @@ function JsonRestrictorCard({
   onInspect?: () => void
 }) {
   const filteredTokens = toolCalls.reduce((sum, c) => sum + c.tokens, 0)
-  const filteredMs = toolCalls.reduce((sum, c) => sum + c.serpApiMs, 0)
   const output = toolCalls[0]?.output ?? "json"
   const restricted = toolCalls.every((c) => c.restrictor !== null)
   const outputLabel = output === "json" ? "JSON" : "Markdown"
@@ -1405,16 +1421,17 @@ function JsonRestrictorCard({
         <ReductionView
           fullTokens={fullFetch.results.reduce((s, r) => s + r.tokens, 0)}
           filteredTokens={filteredTokens}
-          fullMs={fullFetch.results.reduce((s, r) => s + r.serpApiMs, 0)}
-          filteredMs={filteredMs}
         />
       ) : (
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] text-muted-foreground">
             {restricted ? "Filtered for the model" : "Sent to the model"}
           </span>
-          <span className="font-mono text-base font-semibold tabular-nums">
-            {filteredTokens.toLocaleString()} tok
+          <span
+            title={CL100K_NOTE}
+            className="font-mono text-base font-semibold tabular-nums"
+          >
+            ~{filteredTokens.toLocaleString()} tok
           </span>
         </div>
       )}
@@ -1470,13 +1487,9 @@ function JsonRestrictorCard({
 function ReductionView({
   fullTokens,
   filteredTokens,
-  fullMs,
-  filteredMs,
 }: {
   fullTokens: number
   filteredTokens: number
-  fullMs: number
-  filteredMs: number
 }) {
   // NOTE: the "full" response comes from a separate, later SerpApi call,
   //       so on volatile engines (news, finance) it can legitimately come
@@ -1486,7 +1499,6 @@ function ReductionView({
     fullTokens > 0
       ? Math.max(0, Math.round((1 - filteredTokens / fullTokens) * 100))
       : 0
-  const msSaved = fullMs - filteredMs
   const filteredWidth =
     fullTokens > 0
       ? Math.max(2, Math.min(100, (filteredTokens / fullTokens) * 100))
@@ -1499,11 +1511,6 @@ function ReductionView({
           {smallerPct}%
         </span>
         <span className="text-sm text-muted-foreground">smaller</span>
-        {msSaved > 0 ? (
-          <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
-            {(msSaved / 1000).toFixed(2)}s faster
-          </span>
-        ) : null}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -1548,8 +1555,11 @@ function ReductionBar({
           style={{ width: `${widthPct}%` }}
         />
       </div>
-      <span className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums">
-        {tokens.toLocaleString()}
+      <span
+        title={CL100K_NOTE}
+        className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums"
+      >
+        ~{tokens.toLocaleString()}
       </span>
     </div>
   )
