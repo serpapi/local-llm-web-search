@@ -185,6 +185,7 @@ There is no CI. Run `bun run typecheck`, `bun run lint` and `bun run test` befor
 | Path                          | Purpose                                                                                                                                                                        |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/server/agent.ts`         | Tools, Zod schemas, SerpApi calls, token counting, model loading, and `runAgentTurn`, one full agent turn. The SerpApi key never leaves here.                                  |
+| `src/server/models.ts`        | The model list server function, `listModels`. The routes import it instead of `agent.ts`.                                                                                      |
 | `src/server/restrictors.ts`   | The `json_restrictor` strings for the seven engines: `RESTRICTORS` for JSON, `MARKDOWN_RESTRICTORS` for Markdown.                                                              |
 | `src/server/chat.ts`          | Chat server functions. The session and the turn runner live in `chat-session.server.ts`.                                                                                       |
 | `src/server/bench.ts`         | Dev-only benchmark server functions and the saved-run schema. The runner lives in `bench-job.server.ts`.                                                                       |
@@ -198,7 +199,7 @@ There is no CI. Run `bun run typecheck`, `bun run lint` and `bun run test` befor
 
 ## Security
 
-Only `src/server/agent.ts` reads `SERPAPI_API_KEY`, and only in code that runs on the server. Routes import nothing from it but server functions, which the client build replaces with RPC stubs, and the build fails if the SerpApi SDK would reach the browser. The app never logs the key. The query log in `measurements/benchmark_log.json` removes likely secrets before it saves a query.
+Only `src/server/agent.ts` reads `SERPAPI_API_KEY`, and only in code that runs on the server. Routes never import it. They call server functions in `chat.ts`, `bench.ts` and `models.ts`, which the client build replaces with RPC stubs. `agent.ts` imports `@tanstack/react-start/server-only`, so the build fails if a route or component imports it, or if the SerpApi SDK would reach the browser. The app never logs the key. The query log in `measurements/benchmark_log.json` removes likely secrets before it saves a query.
 
 ## Notes
 

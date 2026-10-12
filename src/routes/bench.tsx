@@ -18,7 +18,7 @@ import type { E2ETierState } from "@/components/bench/e2e-tier"
 import type { PayloadTierState } from "@/components/bench/payload-tier"
 import type { SaveState } from "@/components/bench/saved-runs"
 import { TOOL_OUTPUTS } from "@/lib/agent-types"
-import { listModels } from "@/server/agent"
+import { listModels } from "@/server/models"
 import {
   benchQueries,
   queueBenchJobs,

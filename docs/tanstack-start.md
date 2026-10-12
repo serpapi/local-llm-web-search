@@ -56,29 +56,30 @@ Server state lives in the Query cache. The query factories sit next to the serve
 
 ### Server functions
 
-| Function               | File                  | Method | Input                    | Middleware |
-| ---------------------- | --------------------- | ------ | ------------------------ | ---------- |
-| `listModels`           | `src/server/agent.ts` | GET    | none                     | none       |
-| `getChatSession`       | `src/server/chat.ts`  | GET    | none                     | none       |
-| `getChatStatus`        | `src/server/chat.ts`  | GET    | none                     | none       |
-| `sendChatMessage`      | `src/server/chat.ts`  | POST   | `chatTurnInput`          | none       |
-| `clearChatSession`     | `src/server/chat.ts`  | POST   | none                     | none       |
-| `restoreChatSession`   | `src/server/chat.ts`  | POST   | `{ id }` (UUID)          | none       |
-| `measureFullResponses` | `src/server/chat.ts`  | POST   | `{ turnId }`             | none       |
-| `listBenchRuns`        | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
-| `getBenchJob`          | `src/server/bench.ts` | GET    | none                     | `devOnly`  |
-| `saveBenchRun`         | `src/server/bench.ts` | POST   | `saveInput`              | `devOnly`  |
-| `startBenchJob`        | `src/server/bench.ts` | POST   | `startJobInput`          | `devOnly`  |
-| `queueBenchJobs`       | `src/server/bench.ts` | POST   | array of `startJobInput` | `devOnly`  |
-| `stopBenchJob`         | `src/server/bench.ts` | POST   | none                     | `devOnly`  |
+| Function               | File                   | Method | Input                    | Middleware |
+| ---------------------- | ---------------------- | ------ | ------------------------ | ---------- |
+| `listModels`           | `src/server/models.ts` | GET    | none                     | none       |
+| `getChatSession`       | `src/server/chat.ts`   | GET    | none                     | none       |
+| `getChatStatus`        | `src/server/chat.ts`   | GET    | none                     | none       |
+| `sendChatMessage`      | `src/server/chat.ts`   | POST   | `chatTurnInput`          | none       |
+| `clearChatSession`     | `src/server/chat.ts`   | POST   | none                     | none       |
+| `restoreChatSession`   | `src/server/chat.ts`   | POST   | `{ id }` (UUID)          | none       |
+| `measureFullResponses` | `src/server/chat.ts`   | POST   | `{ turnId }`             | none       |
+| `listBenchRuns`        | `src/server/bench.ts`  | GET    | none                     | `devOnly`  |
+| `getBenchJob`          | `src/server/bench.ts`  | GET    | none                     | `devOnly`  |
+| `saveBenchRun`         | `src/server/bench.ts`  | POST   | `saveInput`              | `devOnly`  |
+| `startBenchJob`        | `src/server/bench.ts`  | POST   | `startJobInput`          | `devOnly`  |
+| `queueBenchJobs`       | `src/server/bench.ts`  | POST   | array of `startJobInput` | `devOnly`  |
+| `stopBenchJob`         | `src/server/bench.ts`  | POST   | none                     | `devOnly`  |
 
-Every input is a Zod 4 schema passed straight to `.validator()`. GET serves reads; POST serves writes and `measureFullResponses`, which spends SerpApi searches. The chat and bench handlers call `chat-session.server.ts` and `bench-job.server.ts` through static imports, which the client build drops along with the handlers it replaces by RPC stubs.
+Every input is a Zod 4 schema passed straight to `.validator()`. GET serves reads; POST serves writes and `measureFullResponses`, which spends SerpApi searches. The chat, bench and model-list handlers call `chat-session.server.ts`, `bench-job.server.ts` and `agent.ts` through static imports, which the client build drops along with the handlers it replaces by RPC stubs.
 
 `devOnly` is function middleware whose `.server()` throws unless `import.meta.env.DEV`. The app has no `src/start.ts`, so Start installs its CSRF middleware for server functions.
 
 ### Server-only code
 
 - `*.server.ts` files: `chat-session.server.ts`, `bench-job.server.ts` and `tokens.server.ts`.
+- `agent.ts` starts with `import "@tanstack/react-start/server-only"`, so import protection denies it to any client-reachable module.
 - `createServerOnlyFn` wraps the plain exports of `agent.ts` that reach server-only code: `runAgentTurn`, `executeTool` and `readQueryProgress`.
 - `@tanstack/react-start/server` (`getCookie`, `setCookie`, `setResponseHeader`) is imported only by `chat-session.server.ts`.
 - `SERPAPI_API_KEY`, `LMSTUDIO_URL`, `LMSTUDIO_CONTEXT_LENGTH` and `LMSTUDIO_TTL_SECONDS` are read inside functions in `agent.ts`. None has a `VITE_` prefix.
@@ -146,6 +147,7 @@ Every input is a Zod 4 schema passed straight to `.validator()`. GET serves read
 | Practice                                                                                                                                                                                                                                 | Status               | Notes                                                                                                                                                                                                                                                              |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`createServerOnlyFn` for server-only exports](https://tanstack.com/start/latest/docs/framework/react/guide/environment-functions) ([import protection](https://tanstack.com/start/latest/docs/framework/react/guide/import-protection)) | Fixed                | `executeTool` was a plain export, so the `serpapi` SDK stayed in the client module graph (Vite externalized `https` and `querystring` for it) and only tree-shaking kept it out of the bundle. Wrapped like `runAgentTurn`, it no longer reaches the client graph. |
+| [Marker import on a server module that isn't named `.server.ts`](https://tanstack.com/start/latest/docs/framework/react/guide/import-protection)                                                                                         | Fixed                | Both routes imported `listModels` from `agent.ts`, so the whole agent module sat in the client module graph and its restrictor strings reached the client bundle. `listModels` moved to `models.ts`, and `agent.ts` imports `@tanstack/react-start/server-only`.   |
 | [`*.server.ts` files denied in the client](https://tanstack.com/start/latest/docs/framework/react/guide/import-protection)                                                                                                               | Follows              |                                                                                                                                                                                                                                                                    |
 | [Deny rules for server-only packages](https://tanstack.com/start/latest/docs/framework/react/guide/import-protection)                                                                                                                    | Fixed                | `serpapi`, `openai` and `js-tiktoken`. A test import of `serpapi` from a client hook failed the build with the full import trace.                                                                                                                                  |
 | [Read `process.env` per request, not at module scope](https://tanstack.com/start/latest/docs/framework/react/guide/environment-variables)                                                                                                | Fixed                | `LMSTUDIO_URL` and `LMSTUDIO_TTL_SECONDS` were read at module load.                                                                                                                                                                                                |

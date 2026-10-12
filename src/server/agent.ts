@@ -1,6 +1,11 @@
+// Server only: import protection fails the build if a route or component
+// imports this file. Routes reach it through the server functions in
+// `chat.ts`, `bench.ts` and `models.ts`, whose handlers the client build
+// replaces with RPC stubs.
+import "@tanstack/react-start/server-only"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import { createServerFn, createServerOnlyFn } from "@tanstack/react-start"
+import { createServerOnlyFn } from "@tanstack/react-start"
 import OpenAI from "openai"
 import {
   InvalidArgumentError,
@@ -1915,72 +1920,70 @@ export function parseLmStudioModels(
 }
 
 /**
- * Server function: list every LLM LM Studio knows about, with metadata and
- * a recommended context size.
+ * Every LLM LM Studio knows about, with metadata and a recommended context
+ * size. The routes reach it through `listModels` in `models.ts`.
  */
-export const listModels = createServerFn({ method: "GET" }).handler(
-  async (): Promise<Array<ModelInfo>> => {
-    let res: Response
-    try {
-      res = await fetch(`${lmStudioNativeUrl()}/models`, {
-        headers: lmStudioHeaders(),
-        signal: AbortSignal.timeout(LM_STUDIO_FETCH_TIMEOUT_MS),
-      })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      throw new LmStudioError(
-        `Can't reach LM Studio at ${lmStudioNativeUrl()}: ${msg}`,
-        "Is LM Studio running on localhost:1234? Open it → Developer tab → Start Server."
-      )
-    }
-    if (res.status === 401 || res.status === 403) {
-      throw new LmStudioError(
-        `LM Studio returned ${res.status} on ${lmStudioNativeUrl()}/models`,
-        lmStudioApiKey()
-          ? "LM Studio rejected LMSTUDIO_API_KEY. Create a new token on its Developer page and update .env."
-          : "LM Studio requires authentication. Create a token on its Developer page, set LMSTUDIO_API_KEY in .env, then restart `bun dev`."
-      )
-    }
-    if (!res.ok) {
-      throw new LmStudioError(
-        `LM Studio returned ${res.status} on ${lmStudioNativeUrl()}/models`,
-        "Restart LM Studio's server (Developer tab → Stop → Start) and try again."
-      )
-    }
-    const models = parseLmStudioModels(await res.json())
-    if (!models) {
-      throw new LmStudioError(
-        `LM Studio returned an unexpected model list from ${lmStudioNativeUrl()}/models.`,
-        "Update LM Studio, then restart its server from the Developer tab."
-      )
-    }
-    // WHY: LM Studio sometimes lists the same logical model twice (the
-    //      GGUF and MLX variants of one release share the `key`). Dedupe
-    //      by key, or the model picker warns about duplicate React keys;
-    //      keeping the first entry is fine.
-    const seen = new Set<string>()
-    return models
-      .filter((m) => m.type === "llm")
-      .filter((m) => {
-        if (seen.has(m.key)) return false
-        seen.add(m.key)
-        return true
-      })
-      .map((m): ModelInfo => ({
-        id: m.key,
-        displayName: m.display_name ?? m.key,
-        arch: m.architecture,
-        params: m.params_string,
-        maxContextLength: m.max_context_length,
-        currentContextLength:
-          m.loaded_instances[0]?.config.context_length ?? null,
-        toolUseTrained: m.capabilities?.trained_for_tool_use ?? false,
-        format: m.format,
-        recommendedContextLength: recommendedContext(m.max_context_length),
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id))
+export async function readModels(): Promise<Array<ModelInfo>> {
+  let res: Response
+  try {
+    res = await fetch(`${lmStudioNativeUrl()}/models`, {
+      headers: lmStudioHeaders(),
+      signal: AbortSignal.timeout(LM_STUDIO_FETCH_TIMEOUT_MS),
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new LmStudioError(
+      `Can't reach LM Studio at ${lmStudioNativeUrl()}: ${msg}`,
+      "Is LM Studio running on localhost:1234? Open it → Developer tab → Start Server."
+    )
   }
-)
+  if (res.status === 401 || res.status === 403) {
+    throw new LmStudioError(
+      `LM Studio returned ${res.status} on ${lmStudioNativeUrl()}/models`,
+      lmStudioApiKey()
+        ? "LM Studio rejected LMSTUDIO_API_KEY. Create a new token on its Developer page and update .env."
+        : "LM Studio requires authentication. Create a token on its Developer page, set LMSTUDIO_API_KEY in .env, then restart `bun dev`."
+    )
+  }
+  if (!res.ok) {
+    throw new LmStudioError(
+      `LM Studio returned ${res.status} on ${lmStudioNativeUrl()}/models`,
+      "Restart LM Studio's server (Developer tab → Stop → Start) and try again."
+    )
+  }
+  const models = parseLmStudioModels(await res.json())
+  if (!models) {
+    throw new LmStudioError(
+      `LM Studio returned an unexpected model list from ${lmStudioNativeUrl()}/models.`,
+      "Update LM Studio, then restart its server from the Developer tab."
+    )
+  }
+  // WHY: LM Studio sometimes lists the same logical model twice (the
+  //      GGUF and MLX variants of one release share the `key`). Dedupe
+  //      by key, or the model picker warns about duplicate React keys;
+  //      keeping the first entry is fine.
+  const seen = new Set<string>()
+  return models
+    .filter((m) => m.type === "llm")
+    .filter((m) => {
+      if (seen.has(m.key)) return false
+      seen.add(m.key)
+      return true
+    })
+    .map((m): ModelInfo => ({
+      id: m.key,
+      displayName: m.display_name ?? m.key,
+      arch: m.architecture,
+      params: m.params_string,
+      maxContextLength: m.max_context_length,
+      currentContextLength:
+        m.loaded_instances[0]?.config.context_length ?? null,
+      toolUseTrained: m.capabilities?.trained_for_tool_use ?? false,
+      format: m.format,
+      recommendedContextLength: recommendedContext(m.max_context_length),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+}
 
 // ─── Inline tool-call parsing ──────────────────────────
 // Many open models emit tool calls as text inside `message.content`

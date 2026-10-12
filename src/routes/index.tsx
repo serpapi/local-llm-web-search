@@ -96,7 +96,7 @@ import {
   fitBreakdown,
   isToolOutput,
 } from "@/lib/agent-types"
-import { listModels } from "@/server/agent"
+import { listModels } from "@/server/models"
 import {
   chatQueries,
   clearChatSession,
