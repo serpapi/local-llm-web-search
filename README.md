@@ -78,7 +78,7 @@ LM Studio's estimate accounts for the platform, so the same code works on Apple 
 
 **MLX models size their own window.** On GGUF models the requested size is exact, and LM Studio rejects a longer prompt with `exceed_context_size_error`. LM Studio's MLX engine instead fits the window to free memory and keeps the larger of that and the request. Asked for 32,768, Qwen 3.8 27B got 61,696 on a 36 GB Mac and 119,552 on a 48 GB one. So the app checks the model's own prompt count after each call, and stops a turn whose prompt is over the size it asked for. Every model then works within the same window.
 
-The app runs one model at a time. Each question unloads any other model before it loads the selected one, so the guardrail can use all the memory. A question for another model while one is still answering fails with a message saying so.
+The app runs one model at a time. Each question unloads any other LLM before it loads the selected one, so the guardrail can use all the memory. Embedding models stay loaded. A question for another model while one is still answering fails with a message saying so.
 
 ### Configuration
 

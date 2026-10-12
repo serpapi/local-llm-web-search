@@ -11,6 +11,7 @@ import {
   extractSources,
   hasInlineToolCall,
   historyAfterTurn,
+  instancesToFree,
   isEmptyFinanceResponse,
   isTransientSerpApiError,
   isUnparseableReply,
@@ -1349,5 +1350,25 @@ describe("historyAfterTurn", () => {
     expect(out).toHaveLength(4)
     expect(out[3].role).toBe("assistant")
     expect(out[3].content).toMatch(/couldn't find the answer/)
+  })
+})
+
+describe("instancesToFree", () => {
+  const loaded = [
+    { id: "qwen/qwen3.8-27b", model: "qwen/qwen3.8-27b", type: "llm" },
+    {
+      id: "google/gemma-4-12b-qat",
+      model: "google/gemma-4-12b-qat",
+      type: "llm",
+    },
+    {
+      id: "text-embedding-nomic-embed-text-v1.5",
+      model: "text-embedding-nomic-embed-text-v1.5",
+      type: "embedding",
+    },
+  ]
+
+  it("frees the other LLMs and keeps embedding models", () => {
+    expect(instancesToFree(loaded, "qwen/qwen3.8-27b")).toEqual([loaded[1]])
   })
 })

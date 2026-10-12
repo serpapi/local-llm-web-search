@@ -1539,7 +1539,7 @@ export function contextBackoffSequence(start: number): Array<number> {
  * unreachable. Never throws.
  */
 async function allLoadedInstances(): Promise<
-  Array<{ id: string; model: string; ctx: number }>
+  Array<{ id: string; model: string; type: string; ctx: number }>
 > {
   try {
     const res = await fetch(`${lmStudioNativeUrl()}/models`, {
@@ -1553,6 +1553,7 @@ async function allLoadedInstances(): Promise<
         m.loaded_instances.map((i) => ({
           id: i.id,
           model: m.key,
+          type: m.type,
           ctx: i.config.context_length,
         }))
       )
@@ -1616,6 +1617,18 @@ export function uniqueInstances<T extends { id: string }>(
     seen.add(i.id)
     return true
   })
+}
+
+/**
+ * The loaded instances to unload before loading `model`: every other LLM.
+ * Embedding models stay loaded; they are small, and another app may be
+ * using one. Exported for tests.
+ */
+export function instancesToFree<T extends { model: string; type: string }>(
+  all: Array<T>,
+  model: string
+): Array<T> {
+  return all.filter((i) => i.model !== model && i.type === "llm")
 }
 
 /**
@@ -1782,13 +1795,11 @@ async function ensureModelLoaded(
 
   const all = await allLoadedInstances()
   const targetInstances = all.filter((i) => i.model === model)
-  const others = all.filter((i) => i.model !== model)
-
-  // WHY: this is a one-model-at-a-time chat demo, so free every OTHER model
+  // WHY: this is a one-model-at-a-time chat demo, so free every OTHER LLM
   //      before loading the selected one. Dedicating memory to the active
   //      model gives the guardrail its full budget. Otherwise a model you
   //      tried earlier sits resident and squeezes the new one's context.
-  for (const o of others) await unloadInstance(o.id)
+  for (const o of instancesToFree(all, model)) await unloadInstance(o.id)
 
   const reusable = reusableLoad(loadedByUs.get(model), targetInstances, target)
   if (reusable) return reusable
