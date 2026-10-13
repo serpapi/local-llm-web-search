@@ -14,12 +14,13 @@ This is the companion repository for the SerpApi article [How to Connect Your Lo
 - Lets you pick what the model reads as a tool result: SerpApi's JSON response, or its [Markdown output](https://serpapi.com/markdown-output) (`output=md`), with or without a restrictor.
 - Shows live progress while a query runs (loading the model, thinking, calling SerpApi, writing the answer), then LM Studio's token count for the model's last call, split into its parts, and the time each phase took.
 - Lists every search result page the model used as a clickable source under the answer.
-- Validates tool arguments with Zod. A bad argument ends the turn with an error that says what was wrong and what to try.
+- Validates tool arguments with Zod. A bad argument in the first round ends the turn with an error that says what was wrong and what to try. In a later round, the model answers from the results it already has.
 - Keeps the SerpApi key on the server. It never ships in a client bundle.
 
 ## Requirements
 
 - [Bun](https://bun.sh) 1.3 or newer.
+- [Node.js](https://nodejs.org) 22.12 or newer. Bun runs Vite and `bun run start` with it.
 - [LM Studio](https://lmstudio.ai) running on `localhost:1234` with a model trained for tool use. See [Which model to load](#which-model-to-load).
 - A [SerpApi](https://serpapi.com) account and API key.
 
@@ -46,12 +47,12 @@ These four models were tested end to end on the 13 benchmark questions. LM Studi
 
 | Model                 | LM Studio ID             | Format | Answered out of 13 (JSON / Markdown / Raw) | 7 search questions in Markdown |
 | --------------------- | ------------------------ | ------ | ------------------------------------------ | ------------------------------ |
-| Qwen 3.8 27B          | `qwen/qwen3.8-27b`       | MLX    | 13 / 13 / 11                               | 356 s                          |
-| Meta Muse Glimmer 28B | `meta/muse-glimmer`      | GGUF   | 13 / 12 / 12                               | 414 s                          |
-| Prism Bonsai 27B      | `prism-ml/bonsai-27b`    | MLX    | 13 / 13 / 11                               | 252 s                          |
-| Gemma 4 12B QAT       | `google/gemma-4-12b-qat` | GGUF   | 13 / 13 / 11                               | 118 s                          |
+| Qwen 3.8 27B          | `qwen/qwen3.8-27b`       | MLX    | 13 / 13 / 13                               | 278 s                          |
+| Meta Muse Glimmer 28B | `meta/muse-glimmer`      | GGUF   | 13 / 13 / 13                               | 420 s                          |
+| Prism Bonsai 27B      | `prism-ml/bonsai-27b`    | MLX    | 13 / 13 / 13                               | 153 s                          |
+| Gemma 4 12B QAT       | `google/gemma-4-12b-qat` | GGUF   | 13 / 13 / 13                               | 105 s                          |
 
-Every Raw miss is a Finance question whose page does not fit a 32K window.
+In the benchmark run behind this table, every model answered all 13 questions in each mode. Raw depends on the size of the live page: comparing AAPL and TSLA came to 31,315 tokens on Gemma 4 12B QAT, just under the 32K window, and in a run with bigger pages every model missed one or two Finance questions in Raw. See [Tool output](#tool-output-json-or-markdown).
 
 The app picks Qwen 3.8 27B by default when it is installed. In the long-conversation tests it turned follow-ups like "around there" and "which of those" into the right searches. Gemma 4 12B QAT answers about three times faster and needs less memory, but it has most of the [known limitations](#known-limitations). Models below 7B are unreliable with `tool_choice: "auto"`.
 
@@ -122,15 +123,15 @@ These came up in long test conversations, mostly with Gemma 4 12B QAT, and are n
 
 ## Available tools
 
-| Tool                     | Example query                                     |
-| ------------------------ | ------------------------------------------------- |
-| `google_search`          | Who won the last F1 race?                         |
-| `google_finance_search`  | What's the current price of AAPL?                 |
-| `google_news_search`     | Latest news about AI regulation                   |
-| `google_maps_search`     | Barbecue restaurants in Austin, Texas             |
-| `google_flights_search`  | Flights from SCL to MAD on 2026-05-15             |
-| `google_hotels_search`   | Hotels in Barcelona, May 15 to 18, for two adults |
-| `google_shopping_search` | Best price for AirPods Pro                        |
+| Tool                     | Example query                                                  |
+| ------------------------ | -------------------------------------------------------------- |
+| `google_search`          | Who won the last F1 race?                                      |
+| `google_finance_search`  | What's the current price of AAPL?                              |
+| `google_news_search`     | Latest news about AI regulation                                |
+| `google_maps_search`     | Barbecue restaurants in Austin, Texas                          |
+| `google_flights_search`  | Flights from SCL to MAD two months from today                  |
+| `google_hotels_search`   | Hotels in Barcelona for two adults, three nights in two months |
+| `google_shopping_search` | Best price for AirPods Pro                                     |
 
 ### Tool output: JSON or Markdown
 
@@ -144,7 +145,7 @@ The output picker, after the Examples button and the model picker, sets what Ser
 
 SerpApi's Markdown output renders the kept fields as headings, lists and tables, without JSON's keys, quotes and braces. With the same fields, it is about 27% smaller than JSON across the seven example questions. Markdown mode spends that saving on data. `MARKDOWN_RESTRICTORS` keeps more items and more fields per tool, such as opening hours for places, related articles for news, legroom for flights, and a description for hotels, and lands near the JSON token count.
 
-Markdown (Raw) is the whole document SerpApi renders, so its size follows the live page. Most single questions fit a 32K window, from about 2,000 tokens for Flights to about 17,000 for Shopping. The NVDA Finance page measured 23,000 tokens on October 9, and with the system prompt and the tools it passed 32K on three of the four tested models; on October 12 it measured 9,000 and every model fit. Comparing AAPL and TSLA came to 47,000 to 64,000 tokens on October 9 and 15,000 to 31,000 on October 12. Reading that much takes minutes on a laptop, so this mode gets longer timeouts.
+Markdown (Raw) is the whole document SerpApi renders, so its size follows the live page. Most single questions fit a 32K window, from about 2,000 tokens for Flights to about 17,000 for Shopping. Finance pages vary the most: the NVDA page has measured from 9,000 to 23,000 tokens, and at 23,000, with the system prompt and the tools, it passed 32K on three of the four tested models. Comparing AAPL and TSLA has come to anywhere from 15,000 to 64,000 tokens. Reading that much takes minutes on a laptop, so this mode gets longer timeouts.
 
 In Markdown mode, SerpApi puts `search_metadata` in a YAML block at the top of the document. The server takes the search URL out of it for the sources list and gives the model the rest, the same way JSON mode drops `search_metadata`. The setting applies from the next question and is saved in the browser.
 

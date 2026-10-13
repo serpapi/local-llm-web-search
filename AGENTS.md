@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository. Humans: the README covers
 
 ## What this is
 
-A TanStack Start app that gives a local LLM (served by LM Studio) seven SerpApi tools through OpenAI-style function calling. Every SerpApi response is trimmed server-side with `json_restrictor`. The chat UI lives at `/`; a dev-only benchmark page at `/bench` compares the three tool-output modes (JSON, Markdown, Markdown Raw).
+A TanStack Start app that gives a local LLM (served by LM Studio) seven SerpApi tools through OpenAI-style function calling. Every SerpApi response is trimmed server-side with `json_restrictor`, except in Markdown Raw, where the model reads the whole page. The chat UI lives at `/`; a dev-only benchmark page at `/bench` compares the three tool-output modes (JSON, Markdown, Markdown Raw).
 
 ## Stack and versions
 
@@ -57,7 +57,7 @@ Run before committing: `bun run typecheck`, `bun run lint`, `bun run test`. Ther
 
 **Usage numbers.** `runAgentTurn` returns both `exactUsage` (the final completion's usage) and `totalUsage` (summed across every completion in the turn, `null` if any completion lacked usage). The benchmark compares `totalUsage`. The chat sidebar leads with `exactUsage` and scales the cl100k segments to it with `fitBreakdown`, since LM Studio reports totals, never parts. Never substitute zero for an unknown; render a dash.
 
-**Model lifecycle.** `beginQuery()` / `endQuery()` bracket every `runAgentTurn`. The idle-unload timer only arms when no query is in flight. Do not call the load endpoint with a `ttl` field; LM Studio rejects it. Step down to a smaller context only when LM Studio refuses a load with "insufficient system resources"; show any other load failure as it is. Budget against the smaller of the requested and applied context (`echo_load_config`), and fail a turn whose prompt is over that budget, because MLX models run it anyway. A turn fails fast when another turn is using a different model, because loading one unloads the rest. The load records, the in-flight count, the idle timer and query progress live on `globalThis`. These rules were tested against LM Studio 0.4.25 on 2026-10-02; re-test against a real LM Studio before changing them.
+**Model lifecycle.** `beginQuery()` / `endQuery()` bracket every `runAgentTurn`. The idle-unload timer only arms when no query is in flight. Do not call the load endpoint with a `ttl` field; LM Studio rejects it. Step down to a smaller context only when LM Studio refuses a load with "insufficient system resources"; show any other load failure as it is. Budget against the smaller of the requested and applied context (`echo_load_config`), and fail a turn whose prompt is over that budget, because MLX models run it anyway. A turn fails fast when another turn is using a different model, because loading one unloads the rest. The load records, the in-flight count, the idle timer and query progress live on `globalThis`. These rules were tested against LM Studio 0.4.25; re-test against a real LM Studio before changing them.
 
 **Copy.** Sentence case, plain verbs, no em-dashes anywhere (use a comma, colon, or a new sentence). Labels say what the user sees, not how the system is built. Failures explain what happened and what to do next.
 

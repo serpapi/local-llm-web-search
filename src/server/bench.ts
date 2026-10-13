@@ -89,7 +89,7 @@ const toolCallSchema = z.object({
   tokens: count.nullable(),
   serpApiMs: count.nullable(),
   // The `json_restrictor` the call ran with, null for "Markdown (Raw)".
-  // Absent in runs saved before 2026-10-07.
+  // Absent in older runs.
   restrictor: z.string().nullable().optional(),
 })
 
@@ -128,7 +128,7 @@ export const e2eCellSchema = z.discriminatedUnion("status", [
     // The answer call came back empty and was asked again. Absent in runs
     // saved before this field existed.
     retried: z.boolean().optional(),
-    // Tool rounds, 0 to 3. Runs before 2026-10-07 allowed at most 2.
+    // Tool rounds, 0 to 3. Older runs allowed at most 2.
     // Absent in older runs.
     toolRounds: z.number().int().nonnegative().optional(),
     // The answer stopped at the completion cap. Absent in older runs.

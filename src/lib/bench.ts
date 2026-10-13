@@ -248,7 +248,7 @@ export function failureLabel(error: string): string {
   return error
 }
 
-// The completion cap before 2026-10-02, for runs saved without `cutOff`.
+// The earlier completion cap, for runs saved without `cutOff`.
 const LEGACY_COMPLETION_CAP = 1500
 
 /**

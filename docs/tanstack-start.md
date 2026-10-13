@@ -2,7 +2,7 @@
 
 How this app uses TanStack Start and TanStack Router, and how it handles each documented practice that applies to it.
 
-Docs read on 2026-10-06: [TanStack Start (React)](https://tanstack.com/start/latest/docs/framework/react/overview), [TanStack Router](https://tanstack.com/router/latest/docs/overview) and [TanStack Devtools](https://tanstack.com/devtools/latest/docs/overview), checked against the `docs/` folder of [TanStack/router](https://github.com/TanStack/router/tree/main/docs) at commit `efc2042` (2026-10-05) and the package release notes. The [Start TanStack Query guide](https://tanstack.com/start/latest/docs/framework/react/guide/tanstack-query) was read again on 2026-10-07, when the app adopted Query.
+Sources: [TanStack Start (React)](https://tanstack.com/start/latest/docs/framework/react/overview), [TanStack Router](https://tanstack.com/router/latest/docs/overview), [TanStack Devtools](https://tanstack.com/devtools/latest/docs/overview) and the [Start TanStack Query guide](https://tanstack.com/start/latest/docs/framework/react/guide/tanstack-query), checked against the `docs/` folder of [TanStack/router](https://github.com/TanStack/router/tree/main/docs) at commit `efc2042` and the package release notes.
 
 ## Versions
 

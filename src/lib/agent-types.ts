@@ -23,10 +23,10 @@
  */
 export type ToolOutput = "json" | "markdown" | "markdown-full"
 
-// Ceiling on generated tokens per completion, reasoning included. It was
-// 1,500 until 2026-10-02: on October 1 that cut 13 answers short, all in
-// Markdown modes, and six came back empty because the model spent the whole
-// budget thinking. The system prompt, not this cap, keeps answers short.
+// Ceiling on generated tokens per completion, reasoning included. At an
+// earlier 1,500, a benchmark run cut 13 answers short, all in Markdown
+// modes, and six came back empty because the model spent the whole budget
+// thinking. The system prompt, not this cap, keeps answers short.
 export const MAX_COMPLETION_TOKENS = 4096
 
 export const TOOL_OUTPUTS = ["json", "markdown", "markdown-full"] as const
@@ -257,7 +257,7 @@ const INPUT_SEGMENTS = CONTEXT_SEGMENTS.filter(
  * WHY: the segments are counted with one generic tokenizer (cl100k), while
  *      LM Studio reports only totals, from the model's own tokenizer and
  *      chat template. Those land 4 to 27% above cl100k (Gemma 4 12B and
- *      Qwen 3.8 27B, 2026-10-09), so unscaled segments never add up to the
+ *      Qwen 3.8 27B), so unscaled segments never add up to the
  *      number LM Studio reports. Scaling keeps each segment's share.
  */
 export function fitBreakdown(

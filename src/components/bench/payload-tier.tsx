@@ -255,7 +255,7 @@ const DELTA_COLUMNS = [
   },
   {
     title: "Markdown vs JSON",
-    hint: "Same restrictor, different serialisation.",
+    hint: "Markdown's restrictor keeps more results and fields than JSON's.",
   },
   { title: "Raw vs Markdown", hint: "What the restrictor removed." },
 ]

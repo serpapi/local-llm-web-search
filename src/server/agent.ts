@@ -133,7 +133,7 @@ const LM_STUDIO_CHAT_TIMEOUT_FULL_MS = 480_000
 //      so the back-off probe would shrink the context for no reason.
 const LM_STUDIO_LOAD_TIMEOUT_MS = 60_000
 // Real searches that SerpApi has not cached, Google Shopping especially,
-// took over 20 s in real use on 2026-10-02.
+// took over 20 s in real use.
 const SERPAPI_TIMEOUT_MS = 45_000
 
 // Idle auto-unload window. The app loads models EXPLICITLY (see
@@ -663,8 +663,8 @@ export function validateToolArgs(toolName: string, rawArgs: unknown): ToolArgs {
  * The `json_restrictor` a tool call sends in a given output mode, or
  * `null` for none. JSON sends the tight `RESTRICTORS`; Markdown sends the
  * looser `MARKDOWN_RESTRICTORS`, which spend Markdown's lighter
- * serialisation on more fields at about the same token count; Markdown
- * (Raw) never restricts.
+ * serialisation on more results and fields, for about 8% more tokens on
+ * /bench; Markdown (Raw) never restricts.
  */
 export function restrictorFor(
   name: RestrictorTool,
@@ -2055,7 +2055,7 @@ function parseSingleInlineToolCall(body: string): InlineToolCall | null {
  * Gemma 4's own tool-call format: `<|tool_call>call:NAME{key:<|"|>value<|"|>}`,
  * optionally closed by `<tool_call|>`. LM Studio parses it only when tools
  * are attached; on the answer call, which has none, it reached the user as
- * the answer (Gemma 4 12B, 2026-10-02).
+ * the answer (Gemma 4 12B).
  */
 function parseGemmaToolCalls(content: string): Array<InlineToolCall> {
   const calls: Array<InlineToolCall> = []
@@ -2233,7 +2233,7 @@ const HISTORY_FIT_RATIO = 0.7
  *      rule, keeps that in check.
  *
  *      The answer itself must stay. Replacing it with a placeholder (the
- *      earlier version) broke real follow-ups on 2026-10-02: "which of those
+ *      earlier version) broke real follow-ups: "which of those
  *      has the best rating?" re-searched and named hotels that were not in
  *      the list, a closing summary re-ran three searches and contradicted
  *      the earlier answers, and Muse Glimmer repeated the placeholder text
@@ -2348,7 +2348,7 @@ const MAX_TOOL_CALLS_PER_TURN = 6
 
 // WHY: sent with the call that follows the last round, which goes without
 //      tools. (With `tool_choice: "none"` LM Studio leaves them out of the
-//      prompt too, measured on Gemma 4 12B and Qwen 3.8 27B, 2026-10-09.)
+//      prompt too, measured on Gemma 4 12B and Qwen 3.8 27B.)
 //      With no word about it, Qwen 3.8 and Bonsai 27B wrote yet another
 //      search as text, and the turn ended with no answer.
 const FINAL_ROUND_NOTE = `You have used all ${MAX_TOOL_ROUNDS} search rounds, so you can't search again. Answer now from the search results above. If they don't contain the answer, say what you could not find.`
@@ -2386,9 +2386,9 @@ const ANSWER_NUDGE =
  *
  * WHY: with no tools in the prompt and the final-round note, Qwen 3.8 27B
  *      and Bonsai 27B still wrote another search in their tool-call
- *      syntax, on the answer call and on a retry that only added a nudge
- *      (2026-10-12). The chat template renders the turn's earlier calls in
- *      that syntax, and the model carries on the pattern. With the results
+ *      syntax, on the answer call and on a retry that only added a
+ *      nudge. The chat template renders the turn's earlier calls in that
+ *      syntax, and the model carries on the pattern. With the results
  *      as text there is no call left to carry on.
  */
 export function answerFromResultsMessages(
@@ -2650,7 +2650,7 @@ export const runAgentTurn = async (
     // WHY: LM Studio rejects a reply it can't parse into the model's
     //      tool-call format ("does not match the expected peg-native
     //      format"). It's a sampling slip: Muse Glimmer lost three answers
-    //      this way in one chat on 2026-10-09, and the same question went
+    //      this way in one chat, and the same question went
     //      through when asked again. One more try costs less than a
     //      failed turn.
     const createCompletion = async (
@@ -3201,7 +3201,7 @@ export const runAgentTurn = async (
     //      in place of the answer. Kept whole, the notice read as the
     //      model's own answer. Dropped, a follow-up lost its subject:
     //      after two such turns, Bonsai 27B asked which product "Can you
-    //      check their prices please" meant (2026-10-12).
+    //      check their prices please" meant.
     const nextHistory = historyAfterTurn(
       messages,
       trimmedHistory.length,
