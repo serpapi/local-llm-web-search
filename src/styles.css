@@ -2,12 +2,18 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
+/* shadcn/typeset: rendered-Markdown typography (https://ui.shadcn.com/docs/typeset).
+   Imported after Tailwind so its `components` layer sits under utilities. */
+@import "./typeset.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Inter Variable", sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
   --color-serpapi-blue: #377fea;
   --color-serpapi-purple: #6937ea;
   --color-serpapi-violet: #8c45ef;
@@ -139,4 +145,35 @@
     var(--color-serpapi-purple) 50%,
     var(--color-serpapi-violet) 100%
   );
+}
+
+/* ─── Typeset presets ───
+   `typeset-chat` is the assistant bubble: tight flow so a short answer
+   doesn't float in whitespace. `typeset-compact` is the benchmark answer
+   column, smaller and denser still. Both keep the SerpApi blue for links. */
+.typeset-chat {
+  --typeset-size: 0.875rem;
+  --typeset-leading: 1.6;
+  --typeset-flow: 0.75em;
+}
+.typeset-compact {
+  --typeset-size: 0.8125rem;
+  --typeset-leading: 1.55;
+  --typeset-flow: 0.6em;
+}
+.typeset :where(a) {
+  color: var(--color-serpapi-blue);
+}
+
+/* Honor the OS "reduce motion" setting for every animation and transition,
+   including tw-animate-css enter/exit and spinners. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

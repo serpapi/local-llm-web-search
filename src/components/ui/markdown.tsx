@@ -1,24 +1,22 @@
-import { marked } from "marked"
-import { memo, useId, useMemo } from "react"
+import { createContext, memo, useContext } from "react"
 import ReactMarkdown from "react-markdown"
-import remarkBreaks from "remark-breaks"
+import rehypeExternalLinks from "rehype-external-links"
 import remarkGfm from "remark-gfm"
 
 import { CodeBlock, CodeBlockCode } from "./code-block"
-import type { Components } from "react-markdown"
+import type { Components, Options } from "react-markdown"
 
 import { cn } from "@/lib/utils"
 
 export type MarkdownProps = {
   children: string
-  id?: string
   className?: string
+  /**
+   * Typeset preset class (`typeset-chat`, `typeset-compact`, ...). Presets
+   * only set CSS variables, so a wrapper can still override with utilities.
+   */
+  preset?: string
   components?: Partial<Components>
-}
-
-function parseMarkdownIntoBlocks(markdown: string): Array<string> {
-  const tokens = marked.lexer(markdown)
-  return tokens.map((token) => token.raw)
 }
 
 function extractLanguage(className?: string): string {
@@ -26,6 +24,24 @@ function extractLanguage(className?: string): string {
   const match = className.match(/language-(\w+)/)
   return match ? match[1] : "plaintext"
 }
+
+// WHY: the answer arrives in one round trip (no streaming), so a single
+//      ReactMarkdown pass is enough. shadcn/typeset styles every block the
+//      model can emit (headings, lists, links, tables, blockquotes) from
+//      one CSS file that reads the app's theme tokens, so the only React
+//      overrides left are fenced code (Shiki highlighting, opted out of
+//      typeset), the horizontal-scroll wrapper typeset documents for wide
+//      tables, and images, which render as links. Model-emitted links open
+//      in a new tab via rehype-external-links, the same way the Sources
+//      panel does.
+const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm]
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [
+  [rehypeExternalLinks, { target: "_blank", rel: ["noreferrer", "noopener"] }],
+]
+
+// True inside a Markdown link, where an image must not become a second,
+// nested link.
+const InsideLink = createContext(false)
 
 const INITIAL_COMPONENTS: Partial<Components> = {
   code: function CodeComponent({ className, children, ...props }) {
@@ -35,15 +51,9 @@ const INITIAL_COMPONENTS: Partial<Components> = {
 
     if (isInline) {
       return (
-        <span
-          className={cn(
-            "rounded-sm bg-primary-foreground px-1 font-mono text-sm",
-            className
-          )}
-          {...props}
-        >
+        <code className={className} {...props}>
           {children}
-        </span>
+        </code>
       )
     }
 
@@ -58,108 +68,53 @@ const INITIAL_COMPONENTS: Partial<Components> = {
   pre: function PreComponent({ children }) {
     return <>{children}</>
   },
-  // GFM tables render as bare <table>/<th>/<td> by default — without
-  // table-specific CSS they collapse visually (cells run together, no
-  // dividers). These components give tables a consistent, readable look
-  // that works for any tool whose output includes one (flights, and any
-  // future tool that returns tabular data).
-  table: function TableComponent({ className, children, ...props }) {
+  a: function LinkComponent({ node: _node, ...props }) {
     return (
-      <div className="my-3 overflow-x-auto rounded-lg border">
-        <table
-          className={cn("w-full border-collapse text-sm", className)}
-          {...props}
-        >
-          {children}
-        </table>
+      <InsideLink.Provider value={true}>
+        <a {...props} />
+      </InsideLink.Provider>
+    )
+  },
+  // WHY: answers quote search results, so an image URL comes from a page
+  //      nobody vetted. A link lets the reader choose to open it instead of
+  //      the browser fetching it on render.
+  img: function ImageLink({ src, alt }) {
+    const insideLink = useContext(InsideLink)
+    const url = typeof src === "string" ? src : ""
+    const label = alt || url
+    if (insideLink || !url) return <>{label}</>
+    return (
+      <a href={url} target="_blank" rel="noreferrer noopener">
+        {label}
+      </a>
+    )
+  },
+  // Flight / hotel comparisons come back as wide tables; typeset's own
+  // scroll wrapper keeps them inside the bubble instead of overflowing it.
+  table: function TableComponent({ children, ...props }) {
+    return (
+      <div className="typeset-scroll">
+        <table {...props}>{children}</table>
       </div>
-    )
-  },
-  thead: function TheadComponent({ className, children, ...props }) {
-    return (
-      <thead className={cn("border-b bg-muted/60", className)} {...props}>
-        {children}
-      </thead>
-    )
-  },
-  tbody: function TbodyComponent({ className, children, ...props }) {
-    return (
-      <tbody className={cn("divide-y divide-border", className)} {...props}>
-        {children}
-      </tbody>
-    )
-  },
-  th: function ThComponent({ className, children, ...props }) {
-    return (
-      <th
-        className={cn(
-          "px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase",
-          className
-        )}
-        {...props}
-      >
-        {children}
-      </th>
-    )
-  },
-  td: function TdComponent({ className, children, ...props }) {
-    return (
-      <td
-        className={cn("px-3 py-2 align-top tabular-nums", className)}
-        {...props}
-      >
-        {children}
-      </td>
     )
   },
 }
 
-const MemoizedMarkdownBlock = memo(
-  function MarkdownBlock({
-    content,
-    components = INITIAL_COMPONENTS,
-  }: {
-    content: string
-    components?: Partial<Components>
-  }) {
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={components}
-      >
-        {content}
-      </ReactMarkdown>
-    )
-  },
-  function propsAreEqual(prevProps, nextProps) {
-    return (
-      prevProps.content === nextProps.content &&
-      prevProps.components === nextProps.components
-    )
-  }
-)
-
-MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock"
-
 function MarkdownComponent({
   children,
-  id,
   className,
+  preset = "typeset-chat",
   components = INITIAL_COMPONENTS,
 }: MarkdownProps) {
-  const generatedId = useId()
-  const blockId = id ?? generatedId
-  const blocks = useMemo(() => parseMarkdownIntoBlocks(children), [children])
-
   return (
-    <div className={className}>
-      {blocks.map((block, index) => (
-        <MemoizedMarkdownBlock
-          key={`${blockId}-block-${index}`}
-          content={block}
-          components={components}
-        />
-      ))}
+    <div className={cn("typeset", preset, className)}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={components}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   )
 }

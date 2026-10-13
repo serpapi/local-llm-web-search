@@ -1,30 +1,49 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute } from "@tanstack/react-router"
 import {
-  AlertTriangle,
   ArrowUpRight,
+  BarChart3,
   Braces,
   CheckCircle2,
+  ChevronDown,
   Eraser,
   FlaskConical,
   Loader2,
   Moon,
+  Scale,
   Send,
   Sparkles,
   Sun,
   Wrench,
 } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { toast } from "sonner"
+import type { ReactNode } from "react"
 
+import type {
+  ChatMessage,
+  ChatSearches,
+  ChatSession,
+  ModelContextSnapshot,
+  ToolCallSummary,
+} from "@/lib/chat"
 import type {
   Breakdown,
   ExactUsage,
-  FullResponseResult,
   ModelInfo,
   Phases,
   QueryProgress,
   Source,
   ToolCallInfo,
-} from "@/server/agent"
+  ToolOutput,
+} from "@/lib/agent-types"
+import type { FullFetchState } from "@/hooks/use-full-responses"
+import type { ChatTurnInput } from "@/server/chat"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -47,7 +66,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { RestrictorDialog } from "@/components/restrictor-dialog"
+import {
+  FULL_FETCH_FAILED,
+  RestrictorDialog,
+} from "@/components/restrictor-dialog"
+import { ModelSelector } from "@/components/model-selector"
+import { buildExamples } from "@/lib/examples"
+import { pickDefaultModel } from "@/lib/models"
+import { useTheme } from "@/hooks/use-theme"
+import { useFullResponses } from "@/hooks/use-full-responses"
 import {
   PromptInput,
   PromptInputAction,
@@ -55,71 +82,87 @@ import {
   PromptInputTextarea,
 } from "@/components/ui/prompt-input"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   CONTEXT_SEGMENTS,
+  TOOL_OUTPUTS,
+  TOOL_OUTPUT_META,
   contextTotal,
-  fetchFullResponse,
-  getQueryProgress,
-  listModels,
-  runQuery,
-} from "@/server/agent"
+  fitBreakdown,
+  isToolOutput,
+} from "@/lib/agent-types"
+import { listModels } from "@/server/models"
+import {
+  chatQueries,
+  clearChatSession,
+  restoreChatSession,
+  sendChatMessage,
+} from "@/server/chat"
 
 export const Route = createFileRoute("/")({
-  head: () => ({ meta: [{ title: "SerpApi + Local LLM" }] }),
+  // WHY: the model list is route data, so it loads with the route instead of
+  //      in a client effect. Errors come back as data, not thrown. LM Studio
+  //      being offline is a normal state the composer explains inline. The
+  //      chat session goes into the query cache with it, so a reload renders
+  //      the conversation (and a turn still running) straight away.
+  loader: async ({ context }): Promise<ChatLoaderData> => {
+    const [models] = await Promise.all([
+      listModels().then(
+        (list) => ({ models: list, error: null }),
+        (err: unknown) => ({
+          models: [],
+          error: err instanceof Error ? err.message : String(err),
+        })
+      ),
+      context.queryClient.query(chatQueries.session()),
+    ])
+    return models
+  },
+  head: () => ({ meta: [{ title: "SerpApi Local Agent Lab" }] }),
+  // WHY: the HTML carries the chat session the cookie names, so no cache
+  //      may keep it or hand it to another browser.
+  headers: () => ({ "Cache-Control": "private, no-store" }),
   component: App,
 })
 
-const THEME_STORAGE_KEY = "local-llm-web-search:theme"
-
-// Default model preference: exact qwen3.5-9b > any Qwen > any tool-use
-// trained model > first available.
-function pickDefaultModel(models: Array<ModelInfo>): ModelInfo | null {
-  if (models.length === 0) return null
-  const qwen95 = models.find((m) => /qwen.*3\.?5.*9b/i.test(m.id))
-  if (qwen95) return qwen95
-  const anyQwen = models.find((m) => /qwen/i.test(m.id))
-  if (anyQwen) return anyQwen
-  const trained = models.find((m) => m.toolUseTrained)
-  if (trained) return trained
-  return models[0] ?? null
+type ChatLoaderData = {
+  models: Array<ModelInfo>
+  error: string | null
 }
 
-type ChatMessage = {
-  id: string
-  role: "user" | "assistant"
-  content: string
-  toolCalls?: Array<ToolCallInfo>
-  sources?: Array<Source>
-  elapsedMs?: number
-  phases?: Phases
-  isError?: boolean
+const TOOL_OUTPUT_STORAGE_KEY = "local-llm-web-search:tool-output"
+const MODEL_STORAGE_KEY = "local-llm-web-search:model"
+
+// WHY: storage throws when the browser blocks it. A saved choice is a
+//      convenience, so the page carries on without it.
+function readStored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
 }
 
-// Captured per query: how big was the model's usable context at the moment
-// it ran, so the sidebar can show "tokens used / budget loaded" even after
-// the user changes model in the dropdown.
-type ModelContextSnapshot = {
-  loaded: number // the context LM Studio ACTUALLY loaded this turn (after the server's back-off probe), falling back to the requested size if no load was confirmed
-  max: number // maxContextLength — the model's theoretical ceiling
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // The choice then lasts until the page reloads.
+  }
 }
 
-// Loose shape for the conversation history we ship back to the server.
-// We mirror the OpenAI Chat Completions message shape without depending
-// on the OpenAI SDK types on the client — the server validates it with
-// Zod anyway, so a structural type is enough.
-type ConversationMessage = {
-  role: string
-  content?: string | null
-  tool_calls?: Array<unknown>
-  tool_call_id?: string
-  name?: string
-}
+// The SerpApi outputs the model can receive as tool results, in the order
+// the selector lists them. Copy lives in `TOOL_OUTPUT_META` so /bench and
+// the chat composer describe each mode the same way.
+const TOOL_OUTPUT_OPTIONS = TOOL_OUTPUTS.map((value) => ({
+  value,
+  ...TOOL_OUTPUT_META[value],
+}))
 
 // Colors assigned per context segment. Brand tones for the meaningful movers
 // (tool definitions, tool result, final response); neutrals for overhead
@@ -135,418 +178,150 @@ const SEGMENT_COLORS: Record<keyof Breakdown, string> = {
   final_response: "bg-serpapi-violet",
 }
 
-// Example questions — one per SerpApi engine plus offline / direct-answer
-// prompts. Shown in a popover next to the Send button so the chat area
-// stays clean.
-type ExampleQuestion = {
-  label: string
-  question: string
-}
+const NO_TOOL_CALLS: Array<ToolCallInfo> = []
 
-type ExampleGroup = {
-  title: string
-  description: string
-  items: Array<ExampleQuestion>
-}
+// What to do when LM Studio can't be reached. The model selector carries
+// the error itself.
+const LM_STUDIO_DOWN_HINT =
+  "Start the server from LM Studio's Developer tab, then reload."
 
-// A flight date ~2 months out, computed when the examples are built so
-// the Flights example never points at a past date as the app ages.
-function exampleFlightDate(): string {
-  const d = new Date()
-  d.setMonth(d.getMonth() + 2)
-  return d.toISOString().slice(0, 10)
-}
+// How often the page checks on a running turn.
+const POLL_MS = 500
 
-// A 3-night hotel stay on the same horizon as the flight example, so the
-// trip-planning example reads as one coherent itinerary.
-function exampleHotelDates(): { checkIn: string; checkOut: string } {
-  const checkIn = new Date()
-  checkIn.setMonth(checkIn.getMonth() + 2)
-  const checkOut = new Date(checkIn)
-  checkOut.setDate(checkOut.getDate() + 3)
-  return {
-    checkIn: checkIn.toISOString().slice(0, 10),
-    checkOut: checkOut.toISOString().slice(0, 10),
-  }
-}
-
-function buildExamples(): Array<ExampleGroup> {
-  return [
-    {
-      title: "Live data",
-      description: "One question per SerpApi engine.",
-      items: [
-        {
-          label: "Search",
-          question: "Who is the current CEO of Perplexity?",
-        },
-        {
-          label: "Finance",
-          question: "What's the current price of NVDA?",
-        },
-        {
-          label: "News",
-          question: "Top headlines about the EU AI Act this week",
-        },
-        {
-          label: "Maps",
-          question: "Best barbecue restaurants in Austin, Texas",
-        },
-        {
-          label: "Flights",
-          question: `Flights from JFK to LAX on ${exampleFlightDate()}`,
-        },
-        {
-          label: "Hotels",
-          question: `Hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut} for 2 adults`,
-        },
-        {
-          label: "Shopping",
-          question: "Best price for AirPods Pro 3",
-        },
-      ],
-    },
-    {
-      title: "No tools",
-      description: "Model answers on its own, no API calls.",
-      items: [
-        { label: "Arithmetic", question: "What is 2+2?" },
-        { label: "Percentage", question: "What is 15% of 240?" },
-        { label: "Creative", question: "Write a haiku about API tokens" },
-        {
-          label: "Translation",
-          question: 'Translate "thank you" to Japanese',
-        },
-      ],
-    },
-    {
-      title: "Edge case",
-      description: "Parallel tool calls: multiple engines in one turn.",
-      items: [
-        {
-          label: "Multi-entity",
-          question: "Compare the current prices of AAPL and TSLA",
-        },
-        {
-          label: "Trip planning",
-          question: `Find flights from JFK to BCN on ${exampleHotelDates().checkIn} and hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut}`,
-        },
-      ],
-    },
-  ]
-}
-
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID()
-  }
-  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-// A Finance call that found no quote falls back to google_search, so its
-// response no longer matches what an unrestricted Finance call would
-// return — comparing the two would be apples-to-oranges, so we skip the
-// before/after for it.
-function isFallbackResponse(call: ToolCallInfo): boolean {
-  return (
-    call.response != null &&
-    typeof call.response === "object" &&
-    !Array.isArray(call.response) &&
-    "fallback_from" in call.response
-  )
-}
-
-// The full (unrestricted) SerpApi responses for the latest turn, fetched
-// once and shared by the breakdown card and the inspect dialog. `results`
-// is aligned by index with the turn's tool calls.
-type FullFetchState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "done"; results: Array<FullResponseResult> }
+// On the restrictor card's sizes, which compare two SerpApi responses
+// offline rather than report what LM Studio counted.
+const CL100K_NOTE =
+  "Counted with tiktoken's cl100k_base, as on /bench, so the full and filtered sizes use the same ruler. The model's own tokenizer counts a few percent more."
 
 function App() {
-  const [messages, setMessages] = useState<Array<ChatMessage>>([])
-  const [breakdown, setBreakdown] = useState<Breakdown | null>(null)
-  const [exactUsage, setExactUsage] = useState<ExactUsage | null>(null)
-  const [latestPhases, setLatestPhases] = useState<Phases | null>(null)
-  // Snapshot of the model's context limits at query time. Shown next to
-  // the tokens used so readers see "we spent 911 out of 32,768 available."
-  const [latestModelContext, setLatestModelContext] =
-    useState<ModelContextSnapshot | null>(null)
-  // Full conversation in OpenAI format — every turn's user message,
-  // assistant message(s), and tool result(s). This is what the model sees
-  // as "memory". Clear chat resets to []. See the comment on
-  // `RunQueryResult.messages` in agent.ts for why this is the canonical
-  // multi-turn pattern.
-  const [conversationMessages, setConversationMessages] = useState<
-    Array<ConversationMessage>
-  >([])
-  // Number of old turns the server had to drop from the last request to
-  // stay under the context budget. Surfaces a one-line hint in the UI.
-  const [trimmedTurns, setTrimmedTurns] = useState(0)
-  // Cumulative conversation size (tool defs + system + sanitized history)
-  // returned by the server after each turn. Drives the "Context used" hero
-  // — grows monotonically like LM Studio's counter until the sliding window
-  // trims.
-  const [conversationTokens, setConversationTokens] = useState(0)
-  // Latest tool call details (name, args, raw + formatted responses) —
-  // powers the "Raw vs formatted" dialog. Empty when the last turn was
-  // a direct answer with no tool call.
-  const [latestToolCalls, setLatestToolCalls] = useState<Array<ToolCallInfo>>(
-    []
+  const { models: availableModels, error: modelsError } = Route.useLoaderData()
+  const queryClient = useQueryClient()
+  // The conversation lives on the server (`src/server/chat.ts`). The query
+  // cache holds the page's copy; the loader filled it.
+  const { data: session } = useSuspenseQuery(chatQueries.session())
+  const { messages, last } = session
+  const turn = session.pending
+  const turnRunning = turn !== null
+  // The sidebar shows the last turn that succeeded; a failed turn leaves
+  // its numbers as they were.
+  const latestToolCalls = last?.toolCalls ?? NO_TOOL_CALLS
+  const { fullFetch, canMeasure, measure } = useFullResponses(
+    last?.turnId ?? null,
+    latestToolCalls
   )
-  // Auto-fetch the full (unrestricted) responses for the latest turn so the
-  // card can show the before/after and the dialog can show the raw JSON —
-  // one fetch per turn, shared by both.
-  const [fullFetch, setFullFetch] = useState<FullFetchState>({ status: "idle" })
-  const toolCallKey = latestToolCalls
-    .map((c) => `${c.name}:${JSON.stringify(c.args)}`)
-    .join("|")
-
-  useEffect(() => {
-    if (
-      latestToolCalls.length === 0 ||
-      latestToolCalls.some(isFallbackResponse)
-    ) {
-      setFullFetch({ status: "idle" })
-      return
-    }
-    let cancelled = false
-    setFullFetch({ status: "loading" })
-    Promise.all(
-      latestToolCalls.map((c) =>
-        fetchFullResponse({ data: { name: c.name, args: c.args } })
-      )
-    )
-      .then((results) => {
-        if (!cancelled) setFullFetch({ status: "done", results })
-      })
-      .catch(() => {
-        if (!cancelled) setFullFetch({ status: "error" })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [toolCallKey])
-
+  const undoToastId = useRef<string | number | null>(null)
   const [rawFormattedOpen, setRawFormattedOpen] = useState(false)
   const [input, setInput] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  // Live stage of the in-flight query, polled from the server so the chat
-  // can show real progress instead of a silent spinner.
-  const [liveProgress, setLiveProgress] = useState<QueryProgress | null>(null)
-  const [availableModels, setAvailableModels] =
-    useState<Array<ModelInfo> | null>(null)
-  const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
-  const [modelsError, setModelsError] = useState<string | null>(null)
-  const [theme, setTheme] = useState<"light" | "dark">("light")
+
+  // WHY: poll the small status while a turn runs and read the whole
+  //      session once it ends. The full session carries every tool
+  //      response of the conversation, too heavy to fetch twice a second.
+  const statusQuery = useQuery({
+    ...chatQueries.status(session.id, turn?.startedAt ?? null),
+    enabled: turnRunning,
+    refetchInterval: POLL_MS,
+  })
+  const status = statusQuery.data
+  const stillRunning =
+    status !== undefined &&
+    status.id === session.id &&
+    status.pending?.startedAt === turn?.startedAt
+  useEffect(() => {
+    if (!turnRunning || status === undefined || stillRunning) return
+    // Done, or another tab switched the session: adopt the server's. A
+    // failed read keeps the last state on screen; the next poll retries.
+    queryClient
+      .fetchQuery({ ...chatQueries.session(), staleTime: 0 })
+      .catch(() => {})
+    // WHY: `dataUpdatedAt`, not `status`: an unchanged poll keeps the same
+    //      object, and a failed session read must try again on the next one.
+  }, [statusQuery.dataUpdatedAt])
+
+  const setSession = (next: ChatSession) =>
+    queryClient.setQueryData(chatQueries.session().queryKey, next)
+
+  const send = useMutation({
+    mutationFn: (data: ChatTurnInput) => sendChatMessage({ data }),
+    onSuccess: setSession,
+    onError: (err, data) => {
+      setInput(data.question)
+      toast.error(`Could not send the question: ${err.message}`)
+    },
+  })
+  // Undo points the browser back at the old session, which the server
+  // keeps for a day.
+  const restore = useMutation({
+    mutationFn: (id: string) => restoreChatSession({ data: { id } }),
+    onSuccess: setSession,
+    onError: (err) => {
+      toast.error(`Could not restore the chat: ${err.message}`)
+    },
+  })
+  // Clear starts a new server session.
+  const clear = useMutation({
+    mutationFn: () => clearChatSession(),
+    onSuccess: ({ session: fresh, previousId }) => {
+      setSession(fresh)
+      undoToastId.current = toast("Chat cleared", {
+        action: { label: "Undo", onClick: () => restore.mutate(previousId) },
+      })
+    },
+    onError: (err) => {
+      toast.error(`Could not clear the chat: ${err.message}`)
+    },
+  })
+
+  // `send.isPending` covers pressing Send until the server confirms the turn.
+  const isLoading = send.isPending || turnRunning
+  const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(() =>
+    pickDefaultModel(availableModels)
+  )
+  const { theme, toggleTheme } = useTheme()
+  // Which SerpApi output the model gets as tool results. Persisted like the
+  // theme; applies from the next question on.
+  const [toolOutput, setToolOutput] = useState<ToolOutput>("markdown")
 
   useEffect(() => {
-    let cancelled = false
-    listModels()
-      .then((models) => {
-        if (cancelled) return
-        setAvailableModels(models)
-        setSelectedModel(pickDefaultModel(models))
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setModelsError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    const stored = readStored(TOOL_OUTPUT_STORAGE_KEY)
+    if (isToolOutput(stored)) setToolOutput(stored)
+    // The chat survives a reload, so the model it was talking to should too.
+    const storedModel = readStored(MODEL_STORAGE_KEY)
+    const match = availableModels.find((m) => m.id === storedModel)
+    if (match) setSelectedModel(match)
+  }, [availableModels])
 
-  useEffect(() => {
-    if (typeof window === "undefined") return
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
-    const prefersDark = window.matchMedia(
-      "(prefers-color-scheme: dark)"
-    ).matches
-    const initial: "light" | "dark" =
-      stored === "dark" || stored === "light"
-        ? stored
-        : prefersDark
-          ? "dark"
-          : "light"
-    setTheme(initial)
-    document.documentElement.classList.toggle("dark", initial === "dark")
-  }, [])
-
-  function toggleTheme() {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark"
-      document.documentElement.classList.toggle("dark", next === "dark")
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(THEME_STORAGE_KEY, next)
-      }
-      return next
-    })
+  function changeToolOutput(next: ToolOutput) {
+    setToolOutput(next)
+    writeStored(TOOL_OUTPUT_STORAGE_KEY, next)
   }
 
   const canSubmit = Boolean(selectedModel) && !modelsError
 
-  async function submit() {
+  function submit() {
     const question = input.trim()
     if (!question || isLoading || !selectedModel) return
-
-    const userMessage: ChatMessage = {
-      id: newId(),
-      role: "user",
-      content: question,
-    }
-    setMessages((m) => [...m, userMessage])
+    // Undo would switch to the old chat and hide the answer about to run.
+    if (undoToastId.current !== null) toast.dismiss(undoToastId.current)
     setInput("")
-    setIsLoading(true)
-    const start = performance.now()
-
-    // Poll the server's stage marker while the call is in flight (see
-    // `getQueryProgress` in agent.ts). Best-effort: a failed poll just
-    // leaves the previous stage on screen.
-    const progressId = newId()
-    setLiveProgress({ stage: "load", detail: null })
-    const progressPoll = setInterval(() => {
-      getQueryProgress({ data: { id: progressId } })
-        .then((p) => {
-          if (p) setLiveProgress(p)
-        })
-        .catch(() => {
-          // Ignore poll failures — progress display is cosmetic.
-        })
-    }, 500)
-
-    // Client-side watchdog. The server has its own timeouts (60s per
-    // completion × up to 3 completions + tool exec), so total worst case
-    // is ~3 min. If the RPC hangs past that (e.g. Vite HMR interrupts an
-    // in-flight request during dev), surface a friendly error instead of
-    // leaving the spinner up forever.
-    const CLIENT_WATCHDOG_MS = 180_000
-    const timeoutSentinel = Symbol("client-watchdog-timeout")
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-    const watchdog = new Promise<typeof timeoutSentinel>((resolve) => {
-      timeoutHandle = setTimeout(
-        () => resolve(timeoutSentinel),
-        CLIENT_WATCHDOG_MS
-      )
+    send.mutate({
+      question,
+      model: selectedModel.id,
+      contextLength: selectedModel.recommendedContextLength,
+      maxContextLength: selectedModel.maxContextLength,
+      toolUseTrained: selectedModel.toolUseTrained,
+      toolOutput,
     })
-
-    try {
-      const raced = await Promise.race([
-        runQuery({
-          data: {
-            question,
-            model: selectedModel.id,
-            contextLength: selectedModel.recommendedContextLength,
-            toolUseTrained: selectedModel.toolUseTrained,
-            history: conversationMessages,
-            progressId,
-          },
-        }),
-        watchdog,
-      ])
-
-      if (raced === timeoutSentinel) {
-        throw new Error(
-          "Request timed out after 3 minutes on the client. The server may still be running; try again, or pick a smaller/faster model."
-        )
-      }
-
-      const result = raced
-      setMessages((m) => [
-        ...m,
-        {
-          id: newId(),
-          role: "assistant",
-          content: result.answer,
-          // WHY: on a failed turn `toolCalls` is an empty array, which
-          //      would render a misleading "Direct answer" badge under
-          //      the error text — omit the panel entirely instead.
-          toolCalls: result.ok ? result.toolCalls : undefined,
-          sources: result.sources,
-          elapsedMs: result.elapsedMs,
-          phases: result.phases,
-        },
-      ])
-      // WHY: a failed turn resolves (not rejects) with `ok: false` and
-      //      all-zero metrics, while the conversation itself is unchanged.
-      //      Overwriting the sidebar with those zeros would make it look
-      //      like the context was wiped when it wasn't — keep the last
-      //      real turn's numbers instead.
-      if (result.ok) {
-        setBreakdown(result.breakdown)
-        setExactUsage(result.exactUsage)
-        setLatestPhases(result.phases)
-        setLatestModelContext({
-          // WHY: the server's load probe may have backed the context off to
-          //      fit this machine, so trust the size it reports actually
-          //      loaded. Fall back to the requested size only when the server
-          //      couldn't confirm a load (e.g. LM Studio unreachable).
-          loaded:
-            result.loadedContext ?? selectedModel.recommendedContextLength,
-          max: selectedModel.maxContextLength,
-        })
-        setTrimmedTurns(result.trimmedTurns)
-        setConversationTokens(result.conversationTokens)
-        setLatestToolCalls(result.toolCalls)
-      }
-      // Replace with the server's authoritative history (includes the new
-      // user turn, tool calls/results, and the assistant answer — already
-      // trimmed if needed; unchanged on a failed turn). Next submit sends
-      // this back verbatim.
-      setConversationMessages(result.messages as Array<ConversationMessage>)
-    } catch (err) {
-      const errorText = `**Error:** ${
-        err instanceof Error ? err.message : String(err)
-      }`
-      setMessages((m) => [
-        ...m,
-        {
-          id: newId(),
-          role: "assistant",
-          content: errorText,
-          toolCalls: [],
-          sources: [],
-          elapsedMs: Math.round(performance.now() - start),
-          isError: true,
-        },
-      ])
-    } finally {
-      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
-      clearInterval(progressPoll)
-      setLiveProgress(null)
-      setIsLoading(false)
-    }
   }
 
   function clearChat() {
-    setMessages([])
-    setBreakdown(null)
-    setExactUsage(null)
-    setLatestPhases(null)
-    setLatestModelContext(null)
-    setConversationMessages([])
-    setTrimmedTurns(0)
-    setConversationTokens(0)
-    setLatestToolCalls([])
     setRawFormattedOpen(false)
+    clear.mutate()
   }
 
   return (
     <div className="flex min-h-svh flex-col bg-muted/40 lg:h-svh lg:overflow-hidden">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
-        <Header
-          availableModels={availableModels}
-          selectedModel={selectedModel}
-          onSelectModel={(id) => {
-            const match = availableModels?.find((m) => m.id === id)
-            if (match) setSelectedModel(match)
-          }}
-          modelsError={modelsError}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
+        <Header theme={theme} onToggleTheme={toggleTheme} />
         <RestrictorDialog
           open={rawFormattedOpen}
           onOpenChange={setRawFormattedOpen}
@@ -555,7 +330,7 @@ function App() {
             fullFetch.status === "done" ? fullFetch.results : undefined
           }
           fullLoading={fullFetch.status === "loading"}
-          theme={theme}
+          fullError={fullFetch.status === "error" ? fullFetch.message : null}
         />
         <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden">
           <ChatPanel
@@ -563,23 +338,36 @@ function App() {
             input={input}
             setInput={setInput}
             isLoading={isLoading}
-            progress={liveProgress}
+            progress={(status?.pending ?? turn)?.progress ?? null}
             onSubmit={submit}
             onClear={clearChat}
             canSubmit={canSubmit}
-            turnsInMemory={
-              conversationMessages.filter((m) => m.role === "user").length
-            }
-            trimmedTurns={trimmedTurns}
+            turnsInMemory={session.turnsInMemory}
+            trimmedTurns={last?.trimmedTurns ?? 0}
+            availableModels={availableModels}
+            selectedModel={selectedModel}
+            onSelectModel={(id) => {
+              const match = availableModels.find((m) => m.id === id)
+              if (!match) return
+              setSelectedModel(match)
+              writeStored(MODEL_STORAGE_KEY, match.id)
+            }}
+            modelsError={modelsError}
+            toolOutput={toolOutput}
+            onChangeToolOutput={changeToolOutput}
           />
           <BreakdownPanel
-            breakdown={breakdown}
-            exactUsage={exactUsage}
-            phases={latestPhases}
-            modelContext={latestModelContext}
-            conversationTokens={conversationTokens}
+            breakdown={last?.breakdown ?? null}
+            exactUsage={last?.exactUsage ?? null}
+            totalUsage={last?.totalUsage ?? null}
+            phases={last?.phases ?? null}
+            modelContext={last?.modelContext ?? null}
+            conversationTokens={last?.conversationTokens ?? 0}
             toolCalls={latestToolCalls}
+            searches={session.searches}
+            lastTurnSearches={last?.searches ?? null}
             fullFetch={fullFetch}
+            onMeasureFull={canMeasure ? measure : undefined}
             onInspectRaw={
               latestToolCalls.length > 0
                 ? () => setRawFormattedOpen(true)
@@ -593,17 +381,9 @@ function App() {
 }
 
 function Header({
-  availableModels,
-  selectedModel,
-  onSelectModel,
-  modelsError,
   theme,
   onToggleTheme,
 }: {
-  availableModels: Array<ModelInfo> | null
-  selectedModel: ModelInfo | null
-  onSelectModel: (id: string) => void
-  modelsError: string | null
   theme: "light" | "dark"
   onToggleTheme: () => void
 }) {
@@ -617,26 +397,27 @@ function Header({
         />
         <div className="flex flex-col">
           <h1 className="text-2xl font-semibold tracking-tight">
-            <span className="serpapi-gradient bg-clip-text text-transparent">
-              SerpApi
-            </span>{" "}
-            + Local LLM
+            SerpApi Local Agent Lab
           </h1>
           <p className="text-sm text-muted-foreground">
-            Local inference by{" "}
-            <span className="font-medium text-foreground">LM Studio</span>. Live
-            web data by{" "}
-            <span className="font-medium text-foreground">SerpApi</span>.
+            Local inference using{" "}
+            <span className="font-medium text-foreground">LM Studio</span> and
+            live web data by{" "}
+            <span className="font-medium text-foreground">SerpApi</span>
           </p>
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <ModelSelector
-          availableModels={availableModels}
-          selectedModel={selectedModel}
-          onSelectModel={onSelectModel}
-          modelsError={modelsError}
-        />
+        {import.meta.env.DEV ? (
+          // WHY: /bench returns 404 outside `bun run dev`, so the link only
+          //      exists where the page does.
+          <Button asChild variant="outline" size="lg">
+            <Link to="/bench">
+              <BarChart3 data-icon="inline-start" />
+              Benchmark
+            </Link>
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"
@@ -645,106 +426,55 @@ function Header({
           aria-label={
             theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
           }
-          className="shrink-0"
         >
-          {theme === "dark" ? (
-            <Sun className="h-4 w-4" />
-          ) : (
-            <Moon className="h-4 w-4" />
-          )}
+          {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
       </div>
     </header>
   )
 }
 
-function ModelSelector({
-  availableModels,
-  selectedModel,
-  onSelectModel,
-  modelsError,
+// Picks which SerpApi output feeds the model: the structured JSON response
+// or SerpApi's Markdown output (https://serpapi.com/markdown-output), with
+// or without the restrictor.
+function ToolOutputSelector({
+  value,
+  onChange,
 }: {
-  availableModels: Array<ModelInfo> | null
-  selectedModel: ModelInfo | null
-  onSelectModel: (id: string) => void
-  modelsError: string | null
+  value: ToolOutput
+  onChange: (output: ToolOutput) => void
 }) {
-  if (modelsError !== null) {
-    return (
-      <div
-        role="alert"
-        className="flex h-9 items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 text-xs text-destructive"
-      >
-        <AlertTriangle className="h-3.5 w-3.5" />
-        <span className="font-medium">LM Studio unreachable</span>
-      </div>
-    )
-  }
-
-  if (availableModels === null) {
-    return (
-      <div className="flex h-9 items-center px-3 text-xs text-muted-foreground">
-        Loading models…
-      </div>
-    )
-  }
-
-  if (availableModels.length === 0) {
-    return (
-      <div className="flex h-9 items-center gap-2 rounded-lg border px-3 text-xs">
-        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-        <span className="font-medium">No models loaded</span>
-      </div>
-    )
-  }
-
   return (
-    <Select
-      value={selectedModel?.id ?? undefined}
-      onValueChange={onSelectModel}
-    >
-      <SelectTrigger className="min-w-[240px]" aria-label="Select model">
-        <SelectValue placeholder="Pick a model" />
-      </SelectTrigger>
-      <SelectContent>
-        {availableModels.map((m) => (
-          <SelectItem key={m.id} value={m.id} className="py-2">
-            <ModelSelectRow model={m} />
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
-// Single-line compact display. Fits the default shadcn trigger height (h-9)
-// cleanly and reads well in the dropdown too. The params/arch/ctx detail is
-// moved into a muted suffix rather than a second row, which was pushing the
-// trigger off-balance with the inline dark-mode toggle.
-function ModelSelectRow({ model }: { model: ModelInfo }) {
-  const meta: Array<string> = []
-  if (model.params) meta.push(model.params)
-  if (model.arch) meta.push(model.arch)
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="truncate font-mono text-sm">{model.id}</span>
-      {meta.length > 0 ? (
-        <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:inline">
-          {meta.join(" · ")}
-        </span>
-      ) : null}
-      {model.toolUseTrained ? (
-        <CheckCircle2
-          aria-label="Trained for tool use"
-          className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
-        />
-      ) : (
-        <AlertTriangle
-          aria-label="Not flagged for tool use"
-          className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400"
-        />
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="lg" aria-label="Tool output">
+          <Braces data-icon="inline-start" />
+          {TOOL_OUTPUT_META[value].label}
+          <ChevronDown
+            data-icon="inline-end"
+            className="text-muted-foreground"
+          />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(v) => {
+            if (isToolOutput(v)) onChange(v)
+          }}
+        >
+          {TOOL_OUTPUT_OPTIONS.map((o) => (
+            <DropdownMenuRadioItem
+              key={o.value}
+              value={o.value}
+              title={o.description}
+            >
+              {o.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -763,13 +493,12 @@ function ExamplesPopover({
       <PopoverTrigger asChild>
         <Button
           type="button"
-          size="sm"
+          size="lg"
           variant="outline"
           disabled={disabled}
-          className="h-9 gap-1.5 rounded-full text-xs"
           aria-label="Open examples"
         >
-          <FlaskConical className="h-3.5 w-3.5" />
+          <FlaskConical data-icon="inline-start" />
           Examples
         </Button>
       </PopoverTrigger>
@@ -780,12 +509,7 @@ function ExamplesPopover({
         className="w-[340px] p-3"
       >
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-0.5 px-1">
-            <span className="text-sm font-semibold">Examples</span>
-            <span className="text-xs text-muted-foreground">
-              Click a question to fill the input.
-            </span>
-          </div>
+          <span className="px-1 text-sm font-semibold">Examples</span>
           <div className="flex flex-col gap-3">
             {examples.map((group) => (
               <div key={group.title} className="flex flex-col gap-1.5">
@@ -800,13 +524,15 @@ function ExamplesPopover({
                 <ul className="flex flex-col gap-1">
                   {group.items.map((q) => (
                     <li key={q.question}>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           onPick(q.question)
                           setOpen(false)
                         }}
-                        className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
+                        className="w-full justify-start gap-2 text-left"
                       >
                         <Badge
                           variant="outline"
@@ -817,8 +543,11 @@ function ExamplesPopover({
                         <span className="flex-1 truncate text-foreground">
                           {q.question}
                         </span>
-                        <ArrowUpRight className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                      </button>
+                        <ArrowUpRight
+                          data-icon="inline-end"
+                          className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover/button:opacity-100 group-focus-visible/button:opacity-100"
+                        />
+                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -842,6 +571,12 @@ function ChatPanel({
   canSubmit,
   turnsInMemory,
   trimmedTurns,
+  availableModels,
+  selectedModel,
+  onSelectModel,
+  modelsError,
+  toolOutput,
+  onChangeToolOutput,
 }: {
   messages: Array<ChatMessage>
   input: string
@@ -853,12 +588,20 @@ function ChatPanel({
   canSubmit: boolean
   turnsInMemory: number
   trimmedTurns: number
+  availableModels: Array<ModelInfo>
+  selectedModel: ModelInfo | null
+  onSelectModel: (id: string) => void
+  modelsError: string | null
+  toolOutput: ToolOutput
+  onChangeToolOutput: (output: ToolOutput) => void
 }) {
   const disabled = isLoading || !canSubmit
+  // Only once there is history: how many earlier turns the model is sent
+  // again with each question. A failed turn is not kept.
   const description =
     turnsInMemory === 0
-      ? "Ask anything that needs real-world data, or pick a benchmark below."
-      : `${turnsInMemory} turn${turnsInMemory === 1 ? "" : "s"} in memory${
+      ? null
+      : `${turnsInMemory} turn${turnsInMemory === 1 ? "" : "s"} of history${
           trimmedTurns > 0
             ? ` · ${trimmedTurns} older turn${trimmedTurns === 1 ? "" : "s"} dropped to fit`
             : ""
@@ -867,16 +610,16 @@ function ChatPanel({
     <Card className="flex min-h-[70svh] flex-col gap-0 overflow-hidden py-0 lg:h-full lg:min-h-0">
       <CardHeader className="shrink-0 border-b py-4">
         <CardTitle>Chat</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        {description ? <CardDescription>{description}</CardDescription> : null}
         <CardAction>
           <Button
             variant="ghost"
             size="sm"
             onClick={onClear}
             disabled={isLoading || messages.length === 0}
-            className="h-8 gap-1.5 rounded-full text-xs text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground"
           >
-            <Eraser className="h-3.5 w-3.5" />
+            <Eraser data-icon="inline-start" aria-hidden />
             Clear chat
           </Button>
         </CardAction>
@@ -910,26 +653,46 @@ function ChatPanel({
           <PromptInputTextarea
             aria-label="Chat input"
             placeholder={
-              canSubmit
-                ? "Ask anything that needs real-world data..."
-                : "Load a model in LM Studio to start..."
+              modelsError !== null
+                ? LM_STUDIO_DOWN_HINT
+                : canSubmit
+                  ? "Ask anything that needs real-world data..."
+                  : "Load a model in LM Studio to start..."
             }
           />
           <PromptInputActions className="justify-between gap-2 pt-2">
-            <ExamplesPopover onPick={setInput} disabled={disabled} />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <ExamplesPopover onPick={setInput} disabled={disabled} />
+              <ModelSelector
+                availableModels={availableModels}
+                selectedModel={selectedModel}
+                onSelectModel={onSelectModel}
+                modelsError={modelsError}
+              />
+              <ToolOutputSelector
+                value={toolOutput}
+                onChange={onChangeToolOutput}
+              />
+            </div>
             <PromptInputAction
               tooltip={isLoading ? "Waiting for the model…" : "Send"}
             >
               <Button
                 type="button"
-                size="sm"
+                variant="brand"
+                size="icon-lg"
                 onClick={onSubmit}
                 disabled={disabled || !input.trim()}
-                aria-label="Send message"
-                className="h-9 rounded-full serpapi-gradient px-4 text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                aria-label={
+                  isLoading ? "Waiting for the model" : "Send message"
+                }
+                aria-busy={isLoading}
               >
-                <Send className="h-4 w-4" />
-                <span className="sr-only">Send</span>
+                {isLoading ? (
+                  <Loader2 className="animate-spin" aria-hidden />
+                ) : (
+                  <Send aria-hidden />
+                )}
               </Button>
             </PromptInputAction>
           </PromptInputActions>
@@ -946,13 +709,6 @@ function EmptyChatState() {
         <Sparkles className="h-5 w-5 text-serpapi-blue" />
       </div>
       <p className="text-sm font-medium text-foreground">Ready when you are.</p>
-      <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
-        Type a question, or tap{" "}
-        <span className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-          Examples
-        </span>{" "}
-        below to try all seven SerpApi engines.
-      </p>
     </div>
   )
 }
@@ -1075,7 +831,7 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
   )
 }
 
-function ToolCallsPanel({ toolCalls }: { toolCalls: Array<ToolCallInfo> }) {
+function ToolCallsPanel({ toolCalls }: { toolCalls: Array<ToolCallSummary> }) {
   if (toolCalls.length === 0) {
     return (
       <Badge
@@ -1087,10 +843,15 @@ function ToolCallsPanel({ toolCalls }: { toolCalls: Array<ToolCallInfo> }) {
       </Badge>
     )
   }
+  // Calls in one round ran in parallel; a later round searched again after
+  // reading the results.
+  const rounds = Math.max(...toolCalls.map((c) => c.round ?? 1))
   const heading =
     toolCalls.length === 1 ? null : (
       <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {toolCalls.length} parallel tool calls
+        {rounds > 1
+          ? `${toolCalls.length} tool calls in ${rounds} rounds`
+          : `${toolCalls.length} parallel tool calls`}
       </span>
     )
   return (
@@ -1103,7 +864,7 @@ function ToolCallsPanel({ toolCalls }: { toolCalls: Array<ToolCallInfo> }) {
   )
 }
 
-function ToolBadge({ toolCall }: { toolCall: ToolCallInfo }) {
+function ToolBadge({ toolCall }: { toolCall: ToolCallSummary }) {
   const entries = Object.entries(toolCall.args)
   return (
     <div className="flex flex-col gap-1">
@@ -1164,43 +925,60 @@ function SourcesList({ sources }: { sources: Array<Source> }) {
 function BreakdownPanel({
   breakdown,
   exactUsage,
+  totalUsage,
   phases,
   modelContext,
   conversationTokens,
   toolCalls,
+  searches,
+  lastTurnSearches,
   fullFetch,
+  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown | null
   exactUsage: ExactUsage | null
+  totalUsage: TurnUsage | null
   phases: Phases | null
   modelContext: ModelContextSnapshot | null
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
+  searches: ChatSearches
+  lastTurnSearches: number | null
   fullFetch: FullFetchState
+  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
+  const searchCard =
+    searches.model + searches.compare > 0 ? (
+      <SearchesCard searches={searches} lastTurn={lastTurnSearches} />
+    ) : null
   return (
     <Card className="flex flex-col lg:h-full lg:min-h-0">
       <CardHeader className="shrink-0 pb-3">
         <CardTitle>Token breakdown</CardTitle>
         <CardDescription>
-          How full the model's context is right now, with the split per segment
-          and per-phase latency for the latest turn.
+          What the model read and wrote on its last call.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {breakdown === null ? (
-          <EmptyBreakdown />
+          <>
+            <EmptyBreakdown />
+            {searchCard}
+          </>
         ) : (
           <BreakdownBody
             breakdown={breakdown}
             exactUsage={exactUsage}
+            totalUsage={totalUsage}
             phases={phases}
             modelContext={modelContext}
             conversationTokens={conversationTokens}
             toolCalls={toolCalls}
+            searchCard={searchCard}
             fullFetch={fullFetch}
+            onMeasureFull={onMeasureFull}
             onInspectRaw={onInspectRaw}
           />
         )}
@@ -1208,6 +986,8 @@ function BreakdownPanel({
     </Card>
   )
 }
+
+type TurnUsage = ExactUsage & { completions: number }
 
 function EmptyBreakdown() {
   return (
@@ -1223,30 +1003,41 @@ function EmptyBreakdown() {
 function BreakdownBody({
   breakdown,
   exactUsage,
+  totalUsage,
   phases,
   modelContext,
   conversationTokens,
   toolCalls,
+  searchCard,
   fullFetch,
+  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown
   exactUsage: ExactUsage | null
+  totalUsage: TurnUsage | null
   phases: Phases | null
   modelContext: ModelContextSnapshot | null
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
+  searchCard: ReactNode
   fullFetch: FullFetchState
+  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
-  const estimate = contextTotal(breakdown)
+  // WHY: the segments are estimates and LM Studio's count is exact, so the
+  //      segments are fitted to it: they keep their shares and add up to
+  //      the number LM Studio reported. Without usage they stay estimates.
+  const fit = exactUsage ? fitBreakdown(breakdown, exactUsage) : null
+  const shown = fit?.breakdown ?? breakdown
+  const total = contextTotal(shown)
 
   // Rank segments by size so the compact list leads with the biggest movers.
   const orderedSegments = [...CONTEXT_SEGMENTS]
     .map((seg) => ({
       ...seg,
-      count: breakdown[seg.key],
-      pct: estimate > 0 ? breakdown[seg.key] / estimate : 0,
+      count: shown[seg.key],
+      pct: total > 0 ? shown[seg.key] / total : 0,
       color: SEGMENT_COLORS[seg.key],
     }))
     .sort((a, b) => b.count - a.count)
@@ -1254,30 +1045,23 @@ function BreakdownBody({
   return (
     <div className="flex flex-col gap-5">
       <HeroTotal
-        conversationTokens={conversationTokens}
-        lastTurnTotal={estimate}
+        total={total}
         exactUsage={exactUsage}
         modelContext={modelContext}
       />
-      <StackedBar segments={orderedSegments} total={estimate} />
-      <SegmentList segments={orderedSegments} />
-      {breakdown.tool_result > 0 ? (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Tool call and result tokens are sent to the model this turn, then
-          dropped from conversation memory. That is why the segments above can
-          add up to more than “Context used”.
-        </p>
-      ) : null}
-      {phases ? (
-        <LatencyCard
-          phases={phases}
-          completionTokens={exactUsage?.completionTokens ?? null}
-        />
-      ) : null}
+      <StackedBar segments={orderedSegments} total={total} />
+      <SegmentList segments={orderedSegments} fitted={fit !== null} />
+      <TurnSummary
+        totalUsage={totalUsage}
+        nextQuestionTokens={Math.round(conversationTokens * (fit?.ratio ?? 1))}
+      />
+      {searchCard}
+      {phases ? <LatencyCard phases={phases} /> : null}
       {toolCalls.length > 0 ? (
         <JsonRestrictorCard
           toolCalls={toolCalls}
           fullFetch={fullFetch}
+          onMeasure={onMeasureFull}
           onInspect={onInspectRaw}
         />
       ) : null}
@@ -1286,37 +1070,37 @@ function BreakdownBody({
 }
 
 function HeroTotal({
-  conversationTokens,
-  lastTurnTotal,
+  total,
   exactUsage,
   modelContext,
 }: {
-  conversationTokens: number
-  lastTurnTotal: number
+  total: number
   exactUsage: ExactUsage | null
   modelContext: ModelContextSnapshot | null
 }) {
   const budget = modelContext?.loaded ?? null
-  const pctUsed = budget && budget > 0 ? (conversationTokens / budget) * 100 : 0
+  const pctUsed = budget && budget > 0 ? (total / budget) * 100 : 0
   const pctLabel =
     budget && pctUsed > 0 && pctUsed < 1 ? "<1%" : `${Math.round(pctUsed)}%`
   const maxLabel =
     modelContext && modelContext.max !== modelContext.loaded
       ? `model max ${modelContext.max.toLocaleString()}`
       : null
+  const reasoning = exactUsage?.reasoningTokens ?? 0
 
   return (
     <div className="flex flex-col gap-2">
       <span
         className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
-        title="Tokens the conversation carries into the next turn, estimated with the cl100k tokenizer. Local models typically count 10-30% higher. Tool payloads are dropped from memory after each turn."
+        title="Everything the model read and wrote on the last call of this turn, as LM Studio counted it with the model's own tokenizer and chat template. The segments below share that total in proportion to estimates from a generic tokenizer."
       >
         Context used
       </span>
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-3xl font-semibold tabular-nums">
-            ~{conversationTokens.toLocaleString()}
+            {exactUsage ? "" : "~"}
+            {total.toLocaleString()}
           </span>
           {budget != null ? (
             <span className="font-mono text-base text-muted-foreground tabular-nums">
@@ -1340,20 +1124,116 @@ function HeroTotal({
           />
         </div>
       ) : null}
-      <div className="flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
+      <div className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground tabular-nums">
         <span
           title={
             exactUsage
-              ? "Ground truth from LM Studio for this turn's final inference call. The tool-picking call is counted separately, and the output includes any hidden reasoning tokens."
-              : "Estimated with the cl100k tokenizer."
+              ? "LM Studio's count for the last call. The output includes the tokens the model spent reasoning."
+              : "LM Studio sent no usage for this call, so the total is estimated with the cl100k tokenizer."
           }
         >
           {exactUsage
-            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out · final call`
-            : `~${lastTurnTotal.toLocaleString()} tokens this turn`}
+            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out${
+                reasoning > 0
+                  ? ` (${reasoning.toLocaleString()} reasoning)`
+                  : ""
+              }`
+            : "estimated"}
         </span>
         {maxLabel ? <span>{maxLabel}</span> : null}
       </div>
+    </div>
+  )
+}
+
+// The rest of the turn: what every call read, and what the next question
+// starts from. Explains why the context grows so little between questions.
+function TurnSummary({
+  totalUsage,
+  nextQuestionTokens,
+}: {
+  totalUsage: TurnUsage | null
+  nextQuestionTokens: number
+}) {
+  return (
+    <ul className="flex flex-col gap-1 font-mono text-[11px] text-muted-foreground tabular-nums">
+      {totalUsage && totalUsage.completions > 1 ? (
+        <li
+          className="flex justify-between gap-2"
+          title="Every call LM Studio ran for this answer. Each call reads the whole conversation so far again, so a turn reads much more than its last call."
+        >
+          <span>This turn, {totalUsage.completions} calls</span>
+          <span>
+            {totalUsage.promptTokens.toLocaleString()} in ·{" "}
+            {totalUsage.completionTokens.toLocaleString()} out
+          </span>
+        </li>
+      ) : null}
+      <li
+        className="flex justify-between gap-2"
+        title="Tool definitions, system prompt and history: what the next question starts from. Search results are not kept between questions, only the questions and answers."
+      >
+        <span>Next question starts at</span>
+        <span>~{nextQuestionTokens.toLocaleString()}</span>
+      </li>
+    </ul>
+  )
+}
+
+// What this chat has spent on SerpApi, so a model that searches three
+// times is visible. The full-response checks are the searches the
+// restrictor card re-runs without the restrictor to measure the saving.
+function SearchesCard({
+  searches,
+  lastTurn,
+}: {
+  searches: ChatSearches
+  lastTurn: number | null
+}) {
+  const rows: Array<{ label: string; value: number | null; title: string }> = [
+    {
+      label: "Last answer",
+      value: lastTurn,
+      title: "Searches the model ran for the last answer.",
+    },
+    {
+      label: "By the model",
+      value: searches.model,
+      title:
+        "Every search the model ran in this chat, failed answers included.",
+    },
+    {
+      label: "Full-response checks",
+      value: searches.compare,
+      title:
+        "Each search re-run once without the restrictor, to measure what the restrictor saved.",
+    },
+  ]
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <span
+          className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
+          title="Each search costs one SerpApi credit, unless SerpApi serves it from its one-hour cache."
+        >
+          SerpApi searches
+        </span>
+        <span className="font-mono text-xs tabular-nums">
+          {(searches.model + searches.compare).toLocaleString()} this chat
+        </span>
+      </div>
+      <ul className="flex flex-col gap-1 text-[11px]">
+        {rows.map((row) => (
+          <li
+            key={row.label}
+            title={row.title}
+            className="flex items-center justify-between gap-2"
+          >
+            <span className="text-muted-foreground">{row.label}</span>
+            <span className="font-mono tabular-nums">{row.value ?? "–"}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -1392,7 +1272,15 @@ function StackedBar({
   )
 }
 
-function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
+// "~" marks an estimate. With LM Studio's usage, the output is its exact
+// count and the input parts are estimates scaled to its exact total.
+function SegmentList({
+  segments,
+  fitted,
+}: {
+  segments: Array<OrderedSegment>
+  fitted: boolean
+}) {
   return (
     <ul className="flex flex-col gap-1.5">
       {segments.map((seg) => {
@@ -1409,6 +1297,9 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
             />
             <span className="flex-1 truncate">{seg.label}</span>
             <span className="font-mono tabular-nums">
+              {seg.count > 0 && !(fitted && seg.key === "final_response")
+                ? "~"
+                : ""}
               {seg.count.toLocaleString()}
             </span>
             <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
@@ -1421,53 +1312,36 @@ function SegmentList({ segments }: { segments: Array<OrderedSegment> }) {
   )
 }
 
-function LatencyCard({
-  phases,
-  completionTokens,
-}: {
-  phases: Phases
-  completionTokens: number | null
-}) {
-  // WHY: with no tool call there is no second inference — the first call
+function LatencyCard({ phases }: { phases: Phases }) {
+  // WHY: with no tool call there is no second inference. The first call
   //      IS the answer, so labelling it "Pick tool" would be wrong.
   const directAnswer =
     phases.toolExecutionMs === 0 && phases.secondInferenceMs === 0
-  const segments: Array<{
-    key: keyof Phases
-    label: string
-    color: string
-  }> = [
-    {
-      key: "firstInferenceMs",
-      label: directAnswer ? "Answer" : "Pick tool",
-      color: "bg-serpapi-blue",
-    },
-    {
-      key: "toolExecutionMs",
-      label: "SerpApi",
-      color: "bg-serpapi-purple",
-    },
-    {
-      key: "secondInferenceMs",
-      label: "Answer",
-      color: "bg-serpapi-violet",
-    },
-  ]
+  // NOTE: no tokens/sec here. It divided the last call's output by the
+  //       time of every call after the first search, retries included, and
+  //       without streaming the app can't separate the time LM Studio spends
+  //       reading the prompt from the time it spends writing.
+  const segments = (
+    [
+      {
+        key: "firstInferenceMs",
+        label: directAnswer ? "Answer" : "Pick tool",
+        color: "bg-serpapi-blue",
+      },
+      {
+        key: "toolExecutionMs",
+        label: "SerpApi",
+        color: "bg-serpapi-purple",
+      },
+      {
+        key: "secondInferenceMs",
+        label: "Answer",
+        color: "bg-serpapi-violet",
+      },
+    ] as const
+  ).filter((s) => phases[s.key] > 0)
   const total = segments.reduce((sum, s) => sum + phases[s.key], 0)
   if (total === 0) return null
-
-  // Tokens/sec on the answer call. Uses exactUsage.completionTokens (from
-  // LM Studio) divided by the phase that actually generated the answer —
-  // the second call after tools, or the first (and only) call on a direct
-  // answer. Gives a practical "how fast is this machine running this
-  // model" number either way.
-  const answerMs = directAnswer
-    ? phases.firstInferenceMs
-    : phases.secondInferenceMs
-  const tokPerSec =
-    completionTokens != null && answerMs > 0
-      ? Math.round(completionTokens / (answerMs / 1000))
-      : null
 
   return (
     <div className="flex flex-col gap-2">
@@ -1477,26 +1351,17 @@ function LatencyCard({
         </span>
         <span className="font-mono text-xs tabular-nums">
           {(total / 1000).toFixed(2)}s
-          {tokPerSec != null ? (
-            <span className="ml-1.5 text-muted-foreground">
-              · {tokPerSec} tok/s
-            </span>
-          ) : null}
         </span>
       </div>
       <div className="flex h-2 overflow-hidden rounded-full bg-muted">
-        {segments.map((s) => {
-          const ms = phases[s.key]
-          if (ms === 0) return null
-          return (
-            <div
-              key={s.key}
-              className={`${s.color} transition-[width] duration-500 ease-out`}
-              style={{ width: `${(ms / total) * 100}%` }}
-              title={`${s.label}: ${ms}ms`}
-            />
-          )
-        })}
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            className={`${s.color} transition-[width] duration-500 ease-out`}
+            style={{ width: `${(phases[s.key] / total) * 100}%` }}
+            title={`${s.label}: ${phases[s.key]}ms`}
+          />
+        ))}
       </div>
       <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
         {segments.map((s) => (
@@ -1517,55 +1382,97 @@ function LatencyCard({
 }
 
 // Shows what the JSON Restrictor did in one glance: the full SerpApi
-// response vs. the filtered payload the model received. The full-response
-// measurement is fetched once per turn by the page and passed in via
-// `fullFetch`.
+// response vs. the filtered payload the model received. The full response
+// costs one more search per tool call, so it is fetched only when the user
+// asks (`onMeasure`) and passed in via `fullFetch`. When the turn ran
+// without a restrictor the card just reports what the model received.
+// Both sizes are cl100k counts, the ruler /bench uses, not LM Studio's.
 function JsonRestrictorCard({
   toolCalls,
   fullFetch,
+  onMeasure,
   onInspect,
 }: {
   toolCalls: Array<ToolCallInfo>
   fullFetch: FullFetchState
+  onMeasure?: () => void
   onInspect?: () => void
 }) {
   const filteredTokens = toolCalls.reduce((sum, c) => sum + c.tokens, 0)
-  const filteredMs = toolCalls.reduce((sum, c) => sum + c.serpApiMs, 0)
+  const output = toolCalls[0]?.output ?? "json"
+  const restricted = toolCalls.every((c) => c.restrictor !== null)
+  const outputLabel = output === "json" ? "JSON" : "Markdown"
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-          JSON Restrictor
+          {restricted ? "JSON Restrictor" : "SerpApi response"}
         </span>
-        <Badge
-          variant="outline"
-          className="gap-1 font-mono text-[10px] tracking-wide uppercase"
-        >
-          server-side
-        </Badge>
+        <div className="flex items-center gap-1">
+          <Badge
+            variant="outline"
+            title={CL100K_NOTE}
+            className="font-mono text-[10px]"
+          >
+            cl100k
+          </Badge>
+          <Badge
+            variant="outline"
+            className="gap-1 font-mono text-[10px] tracking-wide uppercase"
+          >
+            {outputLabel}
+          </Badge>
+        </div>
       </div>
 
       {fullFetch.status === "done" ? (
         <ReductionView
           fullTokens={fullFetch.results.reduce((s, r) => s + r.tokens, 0)}
           filteredTokens={filteredTokens}
-          fullMs={fullFetch.results.reduce((s, r) => s + r.serpApiMs, 0)}
-          filteredMs={filteredMs}
         />
       ) : (
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] text-muted-foreground">
-            Filtered for the model
+            {restricted ? "Filtered for the model" : "Sent to the model"}
           </span>
-          <span className="font-mono text-base font-semibold tabular-nums">
-            {filteredTokens.toLocaleString()} tok
+          <span
+            title={CL100K_NOTE}
+            className="font-mono text-base font-semibold tabular-nums"
+          >
+            ~{filteredTokens.toLocaleString()} tok
           </span>
         </div>
       )}
 
+      {onMeasure &&
+      (fullFetch.status === "idle" || fullFetch.status === "error") ? (
+        <div className="flex flex-col gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onMeasure}
+            className="w-full justify-center gap-1.5"
+          >
+            <Scale data-icon="inline-start" aria-hidden />
+            Compare with the full response
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            Runs {toolCalls.length === 1 ? "the search" : "each search"} again
+            without the restrictor: {toolCalls.length} more SerpApi{" "}
+            {toolCalls.length === 1 ? "search" : "searches"}.
+          </p>
+        </div>
+      ) : null}
+
       {fullFetch.status === "loading" ? (
         <TextShimmerLoader text="Measuring the full response…" size="sm" />
+      ) : null}
+
+      {fullFetch.status === "error" ? (
+        <p title={fullFetch.message} className="text-[11px] text-destructive">
+          {FULL_FETCH_FAILED}
+        </p>
       ) : null}
 
       {onInspect ? (
@@ -1575,8 +1482,8 @@ function JsonRestrictorCard({
           onClick={onInspect}
           className="w-full justify-center gap-1.5"
         >
-          <Braces className="h-3.5 w-3.5" />
-          Inspect full JSON
+          <Braces data-icon="inline-start" aria-hidden />
+          {restricted ? "Inspect full response" : "Inspect response"}
         </Button>
       ) : null}
     </div>
@@ -1584,28 +1491,23 @@ function JsonRestrictorCard({
 }
 
 // The before/after the user reads first: a big "N% smaller", then two bars
-// on the same scale — a full muted bar for the raw response and a gradient
+// on the same scale: a full muted bar for the raw response and a gradient
 // sliver for what the model received.
 function ReductionView({
   fullTokens,
   filteredTokens,
-  fullMs,
-  filteredMs,
 }: {
   fullTokens: number
   filteredTokens: number
-  fullMs: number
-  filteredMs: number
 }) {
   // NOTE: the "full" response comes from a separate, later SerpApi call,
   //       so on volatile engines (news, finance) it can legitimately come
-  //       back smaller than the filtered one — clamp instead of showing a
+  //       back smaller than the filtered one. Clamp instead of showing a
   //       negative "smaller" or an Infinity-wide bar.
   const smallerPct =
     fullTokens > 0
       ? Math.max(0, Math.round((1 - filteredTokens / fullTokens) * 100))
       : 0
-  const msSaved = fullMs - filteredMs
   const filteredWidth =
     fullTokens > 0
       ? Math.max(2, Math.min(100, (filteredTokens / fullTokens) * 100))
@@ -1618,11 +1520,6 @@ function ReductionView({
           {smallerPct}%
         </span>
         <span className="text-sm text-muted-foreground">smaller</span>
-        {msSaved > 0 ? (
-          <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
-            {(msSaved / 1000).toFixed(2)}s faster
-          </span>
-        ) : null}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -1667,8 +1564,11 @@ function ReductionBar({
           style={{ width: `${widthPct}%` }}
         />
       </div>
-      <span className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums">
-        {tokens.toLocaleString()}
+      <span
+        title={CL100K_NOTE}
+        className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums"
+      >
+        ~{tokens.toLocaleString()}
       </span>
     </div>
   )

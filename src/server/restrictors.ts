@@ -2,7 +2,7 @@
 // SerpApi's `json_restrictor` query parameter does server-side field
 // selection: you append it to a SerpApi call and the response arrives
 // pre-trimmed, so a small local model only ever sees the fields it needs
-// to answer. There is no client-side reshaping — the restricted response
+// to answer. There is no client-side reshaping. The restricted response
 // is exactly what the model receives.
 //
 // Syntax (https://serpapi.com/json-restrictor):
@@ -14,7 +14,7 @@
 //   - multi-field project. : organic_results[].{title,link,snippet}
 //   - multiple top-level   : answer_box,knowledge_graph,organic_results
 //
-// What `json_restrictor` does NOT do — if you need any of these you have
+// What `json_restrictor` does NOT do. If you need any of these you have
 // to post-process the response in your own code:
 //   - field renaming                 (keys stay as SerpApi names them)
 //   - value-level filtering          (no "only stats whose label matches X")
@@ -54,22 +54,37 @@ export function isRestrictorTool(name: string): name is RestrictorTool {
 }
 
 /**
- * Per-tool `json_restrictor` strings, one per engine. Each is a
- * comma-separated list of paths SerpApi keeps in the response.
+ * Per-tool `json_restrictor` strings for JSON mode, one per engine. Each is
+ * a comma-separated list of paths SerpApi keeps in the response. These are
+ * the tight restrictors from the original article; Markdown mode uses
+ * `MARKDOWN_RESTRICTORS` below.
  *
  * Every restrictor also keeps `search_metadata.<engine>_url`, the link to
  * the live SERP behind the result. The agent captures that URL for the
  * Sources panel and then removes `search_metadata` before the model sees
  * the response, so the model's context stays limited to answer fields.
+ *
+ * And every restrictor keeps `error`, which SerpApi sets when a search
+ * found nothing ("Google Flights hasn't returned any results"). Without
+ * it the model gets an empty result and guesses why. It costs nothing
+ * when the search has results.
  */
 export const RESTRICTORS: Record<RestrictorTool, string> = {
-  // Three branches, only the present ones come through per query:
-  // `answer_box` (factual queries), `knowledge_graph` (entity queries),
-  // and the top-5 organic results as the universal fallback.
+  // Only the branches present for a query come through: `answer_box`
+  // (factual queries), `ai_overview` and `related_questions` (where Google
+  // now puts many direct answers), `knowledge_graph` (entity queries), and
+  // the top-5 organic results as the universal fallback. Without the AI
+  // Overview, "Who is the current CEO of Perplexity?" reached the model as
+  // five unrelated organic results and it kept searching instead of
+  // answering. When Google defers the overview (`ai_overview.page_token`
+  // only), no text block comes through and the other branches carry it.
   google_search: [
     "answer_box.{answer,snippet,title}",
+    "ai_overview.text_blocks[0:6].{snippet,list[0:5].{title,snippet}}",
+    "related_questions[0:3].{question,snippet}",
     "knowledge_graph.{title,type,description,source.{name,link}}",
     "organic_results[0:5].{title,link,displayed_link,snippet,date}",
+    "error",
     "search_metadata.google_url",
   ].join(","),
 
@@ -81,16 +96,18 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
     "summary.{title,price,currency,date,exchange,stock,price_movement.{value,percentage,movement}}",
     "knowledge_graph.key_stats.stats[].{label,value}",
     "news_results[0:3].{snippet,title,source,link,date}",
+    "error",
     "search_metadata.google_finance_url",
   ].join(","),
 
   // Google News groups stories into clusters with a top-level `title`
   // plus a nested `stories[]` array. Keeping both lets the consumer
-  // handle either shape without conditional logic — flat news in
+  // handle either shape without conditional logic: flat news in
   // `news_results[].title` or clustered news in
   // `news_results[].stories[0].title`.
   google_news_search: [
     "news_results[0:5].{title,link,source,date,snippet,stories[0:1].{title,link,source.name,date,snippet}}",
+    "error",
     "search_metadata.google_news_url",
   ].join(","),
 
@@ -99,6 +116,7 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_maps_search: [
     "local_results[0:5].{title,rating,reviews,type,address,price,open_state,phone,website,gps_coordinates}",
     "place_results.{title,rating,reviews,type,address,price,open_state,phone,website}",
+    "error",
     "search_metadata.google_maps_url",
   ].join(","),
 
@@ -108,14 +126,16 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_flights_search: [
     "best_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
     "other_flights[0:3].{price,total_duration,type,flights[].{airline,flight_number,travel_class,departure_airport.{id,name,time},arrival_airport.{id,name,time},duration},layovers[].{id,name,duration}}",
+    "error",
     "search_metadata.google_flights_url",
   ].join(","),
 
   // `amenities` and `nearby_places` are intentionally excluded: both are
   // long lists that bloat the context without changing which hotel the
-  // model recommends — price, rating, and class carry the decision.
+  // model recommends. Price, rating, and class carry the decision.
   google_hotels_search: [
     "properties[0:5].{name,type,link,hotel_class,overall_rating,reviews,rate_per_night.lowest,total_rate.lowest,check_in_time,check_out_time}",
+    "error",
     "search_metadata.google_hotels_url",
   ].join(","),
 
@@ -126,150 +146,85 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
   google_shopping_search: [
     "shopping_results[0:5].{title,link,product_link,source,price,extracted_price,old_price,rating,reviews,delivery}",
     "inline_shopping_results[0:3].{title,link,source,price,extracted_price,rating,reviews}",
+    "error",
     "search_metadata.google_shopping_url",
   ].join(","),
 }
 
 /**
- * The fields the MODEL receives, expanded to one flat path per leaf. The
- * UI matches these against the response tree to highlight which keys came
- * through; `[*]` stands for any array index. `search_metadata` is absent
- * on purpose: the restrictor keeps its `<engine>_url` for the Sources
- * panel, but the agent strips it before the model sees the response.
+ * Looser restrictors for Markdown mode. Markdown drops JSON's keys, quotes
+ * and braces, so the same token budget carries more fields and more items.
+ * Each string here is sized to land near the JSON (Restrictor) count for
+ * the same call, from payloads measured on `/bench`: tighter than
+ * the Sep 14 and Sep 22 Markdown restrictors (8 to 10 items, full
+ * `knowledge_graph`, `financials`, `amenities`), which ran 1.5 to 3 times
+ * the JSON size and made models mirror the extra rows into long answers.
  *
- * Keep this in sync with `RESTRICTORS` above: every model-visible leaf a
- * string keeps should have a matching entry here.
+ * Fields added over `RESTRICTORS` are the ones that change an answer:
+ * hours and a description for places, related stories for news, aircraft,
+ * legroom and overnight layovers for flights, a description and location
+ * rating for hotels, the old price and condition for products.
  */
-export const KEPT_PATHS: Record<RestrictorTool, Array<string>> = {
+export const MARKDOWN_RESTRICTORS: Record<RestrictorTool, string> = {
+  // Organic results lead, five of them, as in JSON mode. When Google has no
+  // AI Overview, answer box or knowledge graph for a question, the answer
+  // has to come from the organic results or the related questions. With 3
+  // organic results, listed after the related questions, Qwen 3.8, Gemma 4
+  // and Bonsai each ran out of search rounds on at least one question about
+  // SerpApi's CEO, founding year or prices. SerpApi writes the
+  // sections in the order the paths are listed. With five results, Search
+  // measured 466 tokens on /bench, against 620 in JSON.
   google_search: [
-    "answer_box.answer",
-    "answer_box.snippet",
-    "answer_box.title",
-    "knowledge_graph.title",
-    "knowledge_graph.type",
-    "knowledge_graph.description",
-    "knowledge_graph.source.name",
-    "knowledge_graph.source.link",
-    "organic_results[*].title",
-    "organic_results[*].link",
-    "organic_results[*].displayed_link",
-    "organic_results[*].snippet",
-    "organic_results[*].date",
-  ],
+    "organic_results[0:5].{title,link,snippet,date}",
+    "answer_box.{answer,snippet,title,list}",
+    "ai_overview.text_blocks[0:8].{snippet,list[0:6].{title,snippet}}",
+    "knowledge_graph.{title,type,description,source.{name,link}}",
+    "top_stories[0:3].{title,link,source,date}",
+    "related_questions[0:3].{question,snippet}",
+    "error",
+    "search_metadata.google_url",
+  ].join(","),
+
   google_finance_search: [
-    "summary.title",
-    "summary.price",
-    "summary.currency",
-    "summary.date",
-    "summary.exchange",
-    "summary.stock",
-    "summary.price_movement.value",
-    "summary.price_movement.percentage",
-    "summary.price_movement.movement",
-    "knowledge_graph.key_stats.stats[*].label",
-    "knowledge_graph.key_stats.stats[*].value",
-    "news_results[*].snippet",
-    "news_results[*].title",
-    "news_results[*].source",
-    "news_results[*].link",
-    "news_results[*].date",
-  ],
+    "summary.{title,price,currency,date,exchange,stock,price_movement.{value,percentage,movement}}",
+    "knowledge_graph.key_stats.stats[].{label,value}",
+    "knowledge_graph.about[0:1].{description.snippet}",
+    "news_results[0:5].{snippet,title,source,link,date}",
+    "error",
+    "search_metadata.google_finance_url",
+  ].join(","),
+
   google_news_search: [
-    "news_results[*].title",
-    "news_results[*].link",
-    "news_results[*].source",
-    "news_results[*].date",
-    "news_results[*].snippet",
-    "news_results[*].stories[*].title",
-    "news_results[*].stories[*].link",
-    "news_results[*].stories[*].source.name",
-    "news_results[*].stories[*].date",
-    "news_results[*].stories[*].snippet",
-  ],
+    "news_results[0:7].{title,link,source.name,date,snippet,stories[0:2].{title,link,source.name,date}}",
+    "error",
+    "search_metadata.google_news_url",
+  ].join(","),
+
   google_maps_search: [
-    "local_results[*].title",
-    "local_results[*].rating",
-    "local_results[*].reviews",
-    "local_results[*].type",
-    "local_results[*].address",
-    "local_results[*].price",
-    "local_results[*].open_state",
-    "local_results[*].phone",
-    "local_results[*].website",
-    "local_results[*].gps_coordinates",
-    "place_results.title",
-    "place_results.rating",
-    "place_results.reviews",
-    "place_results.type",
-    "place_results.address",
-    "place_results.price",
-    "place_results.open_state",
-    "place_results.phone",
-    "place_results.website",
-  ],
+    "local_results[0:6].{title,rating,reviews,type,address,price,open_state,hours,phone,website,description}",
+    "place_results.{title,rating,reviews,type,address,price,open_state,hours,phone,website,description}",
+    "error",
+    "search_metadata.google_maps_url",
+  ].join(","),
+
   google_flights_search: [
-    "best_flights[*].price",
-    "best_flights[*].total_duration",
-    "best_flights[*].type",
-    "best_flights[*].flights[*].airline",
-    "best_flights[*].flights[*].flight_number",
-    "best_flights[*].flights[*].travel_class",
-    "best_flights[*].flights[*].duration",
-    "best_flights[*].flights[*].departure_airport.id",
-    "best_flights[*].flights[*].departure_airport.name",
-    "best_flights[*].flights[*].departure_airport.time",
-    "best_flights[*].flights[*].arrival_airport.id",
-    "best_flights[*].flights[*].arrival_airport.name",
-    "best_flights[*].flights[*].arrival_airport.time",
-    "best_flights[*].layovers[*].id",
-    "best_flights[*].layovers[*].name",
-    "best_flights[*].layovers[*].duration",
-    "other_flights[*].price",
-    "other_flights[*].total_duration",
-    "other_flights[*].type",
-    "other_flights[*].flights[*].airline",
-    "other_flights[*].flights[*].flight_number",
-    "other_flights[*].flights[*].travel_class",
-    "other_flights[*].flights[*].duration",
-    "other_flights[*].flights[*].departure_airport.id",
-    "other_flights[*].flights[*].departure_airport.name",
-    "other_flights[*].flights[*].departure_airport.time",
-    "other_flights[*].flights[*].arrival_airport.id",
-    "other_flights[*].flights[*].arrival_airport.name",
-    "other_flights[*].flights[*].arrival_airport.time",
-    "other_flights[*].layovers[*].id",
-    "other_flights[*].layovers[*].name",
-    "other_flights[*].layovers[*].duration",
-  ],
+    "best_flights[0:4].{price,total_duration,type,flights[].{airline,flight_number,airplane,travel_class,departure_airport.{id,time},arrival_airport.{id,time},duration,legroom},layovers[].{id,duration,overnight}}",
+    "other_flights[0:4].{price,total_duration,type,flights[].{airline,flight_number,departure_airport.{id,time},arrival_airport.{id,time},duration},layovers[].{id,duration}}",
+    "price_insights.{lowest_price,price_level,typical_price_range}",
+    "error",
+    "search_metadata.google_flights_url",
+  ].join(","),
+
   google_hotels_search: [
-    "properties[*].name",
-    "properties[*].type",
-    "properties[*].link",
-    "properties[*].hotel_class",
-    "properties[*].overall_rating",
-    "properties[*].reviews",
-    "properties[*].rate_per_night.lowest",
-    "properties[*].total_rate.lowest",
-    "properties[*].check_in_time",
-    "properties[*].check_out_time",
-  ],
+    "properties[0:7].{name,type,link,description,hotel_class,overall_rating,reviews,location_rating,rate_per_night.lowest,total_rate.lowest,check_in_time,check_out_time}",
+    "error",
+    "search_metadata.google_hotels_url",
+  ].join(","),
+
   google_shopping_search: [
-    "shopping_results[*].title",
-    "shopping_results[*].link",
-    "shopping_results[*].product_link",
-    "shopping_results[*].source",
-    "shopping_results[*].price",
-    "shopping_results[*].extracted_price",
-    "shopping_results[*].old_price",
-    "shopping_results[*].rating",
-    "shopping_results[*].reviews",
-    "shopping_results[*].delivery",
-    "inline_shopping_results[*].title",
-    "inline_shopping_results[*].link",
-    "inline_shopping_results[*].source",
-    "inline_shopping_results[*].price",
-    "inline_shopping_results[*].extracted_price",
-    "inline_shopping_results[*].rating",
-    "inline_shopping_results[*].reviews",
-  ],
+    "shopping_results[0:7].{title,product_link,source,price,old_price,rating,reviews,delivery,second_hand_condition}",
+    "inline_shopping_results[0:3].{title,link,source,price,rating,reviews}",
+    "error",
+    "search_metadata.google_shopping_url",
+  ].join(","),
 }
