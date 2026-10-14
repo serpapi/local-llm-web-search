@@ -1,7 +1,7 @@
 import { Loader2, Play } from "lucide-react"
 
 import type { PayloadCall } from "@/lib/bench"
-import type { PayloadMeasurement } from "@/server/bench"
+import type { PayloadMeasurement } from "@/lib/bench-schemas"
 import { PAYLOAD_OUTPUTS } from "@/lib/agent-types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"

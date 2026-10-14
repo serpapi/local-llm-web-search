@@ -3,7 +3,7 @@ import { useState } from "react"
 
 import type { FullResponseResult, ToolCallInfo } from "@/lib/agent-types"
 import type { ChatSession } from "@/lib/chat"
-import { chatQueries, measureFullResponses } from "@/server/chat"
+import { chatQueries, measureFullResponses } from "@/server/chat.functions"
 
 // The full (unrestricted) SerpApi responses for the latest turn, shared by
 // the breakdown card's before/after and the inspect dialog's raw view.

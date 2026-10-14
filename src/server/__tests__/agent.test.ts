@@ -38,7 +38,7 @@ import {
   uniqueInstances,
   unsupportedParam,
   validateToolArgs,
-} from "../agent"
+} from "../agent.server"
 import {
   MARKDOWN_RESTRICTORS,
   RESTRICTORS,

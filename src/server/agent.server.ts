@@ -1,8 +1,8 @@
-// Server only: import protection fails the build if a route or component
-// imports this file. Routes reach it through the server functions in
-// `chat.ts`, `bench.ts` and `models.ts`, whose handlers the client build
-// replaces with RPC stubs.
-import "@tanstack/react-start/server-only"
+// Server only: the `.server.ts` suffix makes import protection fail the
+// build if a route or component imports this file. Routes reach it through
+// the server functions in `chat.functions.ts`, `bench.functions.ts` and
+// `models.functions.ts`, whose handlers the client build replaces with RPC
+// stubs.
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import OpenAI from "openai"
@@ -1180,10 +1180,10 @@ export type RunQueryResult = {
   sources: Array<Source>
   elapsedMs: number
   phases: Phases
-  // WHY: ship the conversation back to the client (sans system prompt)
-  //      so the next `runQuery` can resend it as `history`. You rebuild
-  //      the system prompt on every call so it always reflects today's
-  //      date. Sending it over the wire would just go stale.
+  // WHY: the history the next turn carries, built by `historyAfterTurn`.
+  //      The chat session keeps it on the server and passes it back as
+  //      `history`. It never holds the system prompt, which is rebuilt on
+  //      every call so it always has today's date.
   messages: Array<ChatCompletionMessageParam>
   // NOTE: how many old turns you had to drop to fit inside the model's
   //       context budget. Zero most of the time; surfaces in the UI as
@@ -1924,7 +1924,7 @@ export function parseLmStudioModels(
 
 /**
  * Every LLM LM Studio knows about, with metadata and a recommended context
- * size. The routes reach it through `listModels` in `models.ts`.
+ * size. The routes reach it through `listModels` in `models.functions.ts`.
  */
 export async function readModels(): Promise<Array<ModelInfo>> {
   let res: Response
@@ -3073,8 +3073,8 @@ export const runAgentTurn = async (
       // WHY: an empty answer (or one that still ends in a tool call)
       //      gets one retry, with the searches as plain text (see
       //      `answerFromResultsMessages`). It goes through a throwaway
-      //      `retryMessages` so it never pollutes the history you return
-      //      to the client.
+      //      `retryMessages` so it never pollutes the history the next
+      //      turn carries.
       if (
         lastCall !== "fallback" &&
         (answer.length === 0 || hasInlineToolCall(lastRaw))
@@ -3222,9 +3222,6 @@ export const runAgentTurn = async (
       sources,
       elapsedMs,
       phases,
-      // NOTE: ship everything except the system prompt (index 0)
-      //       back to the client. It'll send it as `history` on
-      //       the next call.
       messages: nextHistory,
       trimmedTurns,
       conversationTokens,

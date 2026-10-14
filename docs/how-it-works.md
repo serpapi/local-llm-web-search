@@ -14,7 +14,7 @@ The app checks every tool argument with Zod. A bad argument in the first round e
 
 LM Studio loads a model with an 8,192-token window unless you ask for another size (before LM Studio 0.4.16 the default was 4,096). The right size depends on the machine. A 36 GB Mac fits far more than a 16 GB laptop, and a PC with a discrete GPU is limited by its VRAM, not its RAM. So the app doesn't guess. It lets LM Studio's memory guardrail decide and looks for the largest size it accepts.
 
-`ensureModelLoaded` in `src/server/agent.ts` does this in four steps.
+`ensureModelLoaded` in `src/server/agent.server.ts` does this in four steps.
 
 1. Start at 32,768 tokens, or the model's maximum if that's smaller. A bigger window doesn't make answers better, and on GGUF models LM Studio reserves memory for the whole window when it loads.
 2. Load the model at that size with `POST /api/v1/models/load` and `echo_load_config: true`. LM Studio either loads it and returns the settings it applied, or refuses with HTTP 500, "insufficient system resources", and its memory estimate. A refusal takes under a tenth of a second, because nothing loads.
@@ -121,4 +121,4 @@ A raw SerpApi response runs from 3,000 to more than 50,000 tokens depending on t
 
 ### How the key stays on the server
 
-Routes never import `agent.ts`. They call server functions in `chat.ts`, `bench.ts` and `models.ts`, which the client build replaces with network calls. `agent.ts` imports `@tanstack/react-start/server-only`, so the build fails if a route or component imports it, or if the SerpApi SDK would end up in the browser bundle. The query log in `measurements/benchmark_log.json` only exists in development.
+Routes never import `agent.server.ts`. They call the server functions in `chat.functions.ts`, `bench.functions.ts` and `models.functions.ts`, which the client build replaces with network calls. The build fails if browser code imports a `.server.ts` file, and a rule in `vite.config.ts` does the same for the SerpApi, OpenAI and tiktoken packages. The query log in `measurements/benchmark_log.json` only exists in development.

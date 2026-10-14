@@ -36,16 +36,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
             "Give a local LLM real-time web data. The model picks a SerpApi tool, the server runs it, and the answer arrives with fresh results and sources.",
         },
         { name: "color-scheme", content: "light dark" },
-        {
-          name: "theme-color",
-          media: "(prefers-color-scheme: light)",
-          content: "#ffffff",
-        },
-        {
-          name: "theme-color",
-          media: "(prefers-color-scheme: dark)",
-          content: "#252525",
-        },
         { property: "og:type", content: "website" },
         { property: "og:title", content: "SerpApi Local Agent Lab" },
         {
@@ -85,6 +75,18 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/* WHY: `HeadContent` renders one meta tag per name, so it would
+                 drop one of the two theme colors. */}
+        <meta
+          name="theme-color"
+          media="(prefers-color-scheme: light)"
+          content="#ffffff"
+        />
+        <meta
+          name="theme-color"
+          media="(prefers-color-scheme: dark)"
+          content="#252525"
+        />
       </head>
       <body>
         <ScriptOnce children={THEME_BOOT_SCRIPT} />

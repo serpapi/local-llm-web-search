@@ -8,8 +8,8 @@ import {
   searchesIn,
   snapshot,
 } from "../chat-session.server"
-import type { RunQueryInput, RunQueryResult } from "../agent"
-import type { ChatTurnInput } from "../chat"
+import type { RunQueryInput, RunQueryResult } from "../agent.server"
+import type { ChatTurnInput } from "@/lib/chat"
 import type { ToolCallInfo } from "@/lib/agent-types"
 
 const input: ChatTurnInput = {

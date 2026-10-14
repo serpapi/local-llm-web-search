@@ -4,8 +4,9 @@
 // page shows. No server imports, so the route can use it freely.
 
 import type { PayloadOutput, ToolOutput } from "@/lib/agent-types"
-import type { BenchJob, E2ECell, PayloadMeasurement } from "@/server/bench"
+import type { BenchJob, E2ECell, PayloadMeasurement } from "@/lib/bench-schemas"
 import { PAYLOAD_OUTPUTS } from "@/lib/agent-types"
+import { exampleTripDates } from "@/lib/examples"
 
 export type ActiveBenchJob = BenchJob & { status: "running" | "stopping" }
 
@@ -16,7 +17,6 @@ export function isActiveJob(
   return job?.status === "running" || job?.status === "stopping"
 }
 
-/** A run's file name: its start time, file-safe and sortable, then its name. */
 /**
  * The name of one queued run when several models run one after another:
  * the run name, if any, then the model, so each file says which model it
@@ -30,6 +30,7 @@ export function queuedRunName(name: string, modelId: string): string {
   return name ? `${name}-${model}` : model
 }
 
+/** A run's file name: its start time, file-safe and sortable, then its name. */
 export function runFileName(name: string, startedAt: Date): string {
   const stamp = startedAt.toISOString().replace(/[:.]/g, "-").slice(0, 19)
   return `${stamp}-${name}.json`
@@ -41,24 +42,12 @@ export type PayloadCall = {
   args: Record<string, string | number>
 }
 
-// A flight date two months out and a three-night hotel stay on the same
-// horizon, mirroring `buildExamples()` so the payload tier and the end-to-end
-// tier ask SerpApi about the same trip.
-function tripDates(): { out: string; checkOut: string } {
-  const d = new Date()
-  d.setMonth(d.getMonth() + 2)
-  const out = d.toISOString().slice(0, 10)
-  const co = new Date(d)
-  co.setDate(co.getDate() + 3)
-  return { out, checkOut: co.toISOString().slice(0, 10) }
-}
-
 /**
  * The tool call each live-data example resolves to, so the payload tier
  * can hit SerpApi without asking the model to pick arguments.
  */
 export function payloadCalls(): Array<PayloadCall> {
-  const { out, checkOut } = tripDates()
+  const { checkIn, checkOut } = exampleTripDates()
   return [
     {
       label: "Search",
@@ -90,7 +79,7 @@ export function payloadCalls(): Array<PayloadCall> {
       args: {
         departure_id: "JFK",
         arrival_id: "LAX",
-        outbound_date: out,
+        outbound_date: checkIn,
         hl: "en",
       },
     },
@@ -99,7 +88,7 @@ export function payloadCalls(): Array<PayloadCall> {
       name: "google_hotels_search",
       args: {
         query: "hotels in Barcelona",
-        check_in_date: out,
+        check_in_date: checkIn,
         check_out_date: checkOut,
         adults: 2,
         gl: "es",

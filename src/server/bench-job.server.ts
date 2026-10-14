@@ -1,10 +1,7 @@
 // Server-only benchmark job runner. The `.server.ts` suffix tells TanStack
 // Start's import protection to keep this file (and the tokenizer and agent
-// loop it reaches) out of the browser bundle. `bench.ts` exposes it to the
-// page through thin server functions.
-
-import { mkdir, rename, rm, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+// loop it reaches) out of the browser bundle. `bench.functions.ts` exposes
+// it to the page through thin server functions.
 
 import {
   executeTool,
@@ -12,25 +9,22 @@ import {
   restrictorFor,
   runAgentTurn,
   validateToolArgs,
-} from "./agent"
+} from "./agent.server"
+import { writeRun } from "./bench-runs.server"
 import { isRestrictorTool } from "./restrictors"
 import { countTokens } from "./tokens.server"
 import type { z } from "zod"
 import type {
   BenchJob,
-  BenchRun,
   E2ECell,
   PayloadMeasurement,
   StartJobInput,
   modelMetaSchema,
   payloadInput,
-} from "./bench"
+} from "@/lib/bench-schemas"
 import type { ToolOutput } from "@/lib/agent-types"
 import { MAX_COMPLETION_TOKENS, PAYLOAD_OUTPUTS } from "@/lib/agent-types"
 import { interleaveCells, isActiveJob, runFileName } from "@/lib/bench"
-
-/** Where runs are saved, relative to the project root. */
-export const RESULTS_DIR = "bench/results"
 
 // ─── Background benchmark job ──────────────────────────
 // WHY: the browser used to drive the run cell by cell. A page reload, a
@@ -48,34 +42,6 @@ export const jobStore = globalThis as typeof globalThis & {
   __benchStop?: boolean
   __benchQueue?: Array<StartJobInput>
   __benchQueueTimer?: ReturnType<typeof setInterval>
-}
-
-/**
- * Write a file through a temp file in the same directory and a rename, so
- * a server killed mid-write leaves the old file whole instead of truncated.
- */
-export async function writeFileAtomic(
-  path: string,
-  content: string
-): Promise<void> {
-  const temp = `${path}.${process.pid}-${Date.now()}.tmp`
-  try {
-    await writeFile(temp, content, "utf-8")
-    await rename(temp, path)
-  } catch (err) {
-    await rm(temp, { force: true })
-    throw err
-  }
-}
-
-/** Write a run to `bench/results/<file>`, stamped with the current time. */
-export async function writeRun(file: string, run: BenchRun): Promise<void> {
-  await mkdir(RESULTS_DIR, { recursive: true })
-  await writeFileAtomic(
-    join(RESULTS_DIR, file),
-    JSON.stringify({ ...run, savedAt: new Date().toISOString() }, null, 2) +
-      "\n"
-  )
 }
 
 async function measureOne(

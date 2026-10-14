@@ -18,18 +18,7 @@ import {
 } from "./chat-session.server"
 import type { ChatSearches, ChatSession, ChatStatus } from "@/lib/chat"
 import type { FullResponseResult } from "@/lib/agent-types"
-import { TOOL_OUTPUTS } from "@/lib/agent-types"
-
-export const chatTurnInput = z.object({
-  question: z.string().trim().min(1).max(4000),
-  model: z.string().min(1),
-  contextLength: z.number().int().positive(),
-  maxContextLength: z.number().int().positive(),
-  toolUseTrained: z.boolean().optional(),
-  toolOutput: z.enum(TOOL_OUTPUTS),
-})
-
-export type ChatTurnInput = z.infer<typeof chatTurnInput>
+import { chatTurnInput } from "@/lib/chat"
 
 /** The browser's chat session, created on first visit. */
 export const getChatSession = createServerFn({ method: "GET" }).handler(

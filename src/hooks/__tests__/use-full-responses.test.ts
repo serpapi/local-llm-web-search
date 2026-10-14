@@ -12,7 +12,7 @@ import type { ChatSession } from "@/lib/chat"
 // Every call here would spend SerpApi searches for real.
 const measureFullResponses = vi.hoisted(() => vi.fn())
 const SESSION_KEY = ["chat", "session"]
-vi.mock("@/server/chat", () => ({
+vi.mock("@/server/chat.functions", () => ({
   measureFullResponses,
   chatQueries: { session: () => ({ queryKey: SESSION_KEY }) },
 }))

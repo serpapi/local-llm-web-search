@@ -1,6 +1,6 @@
 // Server-only chat sessions. The `.server.ts` suffix keeps this file, the
 // cookie helpers and the agent loop it calls out of the browser bundle;
-// `chat.ts` exposes it to the page through thin server functions.
+// `chat.functions.ts` exposes it to the page through thin server functions.
 
 import {
   getCookie,
@@ -14,9 +14,8 @@ import {
   historyMessageSchema,
   readQueryProgress,
   runAgentTurn,
-} from "./agent"
-import type { RunQueryInput, RunQueryResult } from "./agent"
-import type { ChatTurnInput } from "./chat"
+} from "./agent.server"
+import type { RunQueryInput, RunQueryResult } from "./agent.server"
 import type {
   FullResponseResult,
   QueryProgress,
@@ -27,6 +26,7 @@ import type {
   ChatSearches,
   ChatSession,
   ChatStatus,
+  ChatTurnInput,
   ChatTurnStats,
 } from "@/lib/chat"
 

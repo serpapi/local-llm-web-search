@@ -13,19 +13,19 @@ import type {
   E2ECell,
   SavedBenchRun,
   StartJobInput,
-} from "@/server/bench"
+} from "@/lib/bench-schemas"
 import type { E2ETierState } from "@/components/bench/e2e-tier"
 import type { PayloadTierState } from "@/components/bench/payload-tier"
 import type { SaveState } from "@/components/bench/saved-runs"
 import { TOOL_OUTPUTS } from "@/lib/agent-types"
-import { listModels } from "@/server/models"
+import { listModels } from "@/server/models.functions"
 import {
   benchQueries,
   queueBenchJobs,
   saveBenchRun,
   startBenchJob,
   stopBenchJob,
-} from "@/server/bench"
+} from "@/server/bench.functions"
 import { buildExamples } from "@/lib/examples"
 import { pickDefaultModel } from "@/lib/models"
 import { useTheme } from "@/hooks/use-theme"
@@ -57,12 +57,12 @@ export const Route = createFileRoute("/bench")({
   //      normal state the header explains inline, so it comes back as data.
   //      The job is read fresh on every visit: a run may have started, kept
   //      going, or been lost while the page was away.
-  loader: async ({ context }): Promise<BenchLoaderData> => {
+  loader: async ({ context }) => {
     const [modelsResult] = await Promise.all([
       listModels()
-        .then((models) => ({ models, error: null as string | null }))
+        .then((models) => ({ models, error: null }))
         .catch((err: unknown) => ({
-          models: [] as Array<ModelInfo>,
+          models: [],
           error: err instanceof Error ? err.message : String(err),
         })),
       context.queryClient.query(benchQueries.saved()),
@@ -76,11 +76,6 @@ export const Route = createFileRoute("/bench")({
   pendingComponent: PagePending,
   component: BenchPage,
 })
-
-type BenchLoaderData = {
-  models: Array<ModelInfo>
-  error: string | null
-}
 
 const POLL_MS = 1500
 
