@@ -212,8 +212,8 @@ export function RestrictorDialog({
                       </span>
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground tabular-nums">
-                      {full.tokens.toLocaleString()} →{" "}
-                      {call.tokens.toLocaleString()} tokens
+                      {full.tokens.toLocaleString("en-US")} →{" "}
+                      {call.tokens.toLocaleString("en-US")} tokens
                     </div>
                   </div>
                 </div>
@@ -238,7 +238,7 @@ export function RestrictorDialog({
 
 // Tokens and SerpApi fetch time for a pane heading.
 function paneStats(tokens: number, ms: number): string {
-  return `${tokens.toLocaleString()} tokens · ${(ms / 1000).toFixed(2)} s`
+  return `${tokens.toLocaleString("en-US")} tokens · ${(ms / 1000).toFixed(2)} s`
 }
 
 function Arrow() {

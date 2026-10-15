@@ -1,10 +1,15 @@
-import { describe, expect, it } from "vitest"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import {
-  benchRunSchema,
-  payloadMeasurementSchema,
+  RESULTS_DIR,
+  listSavedRuns,
   upgradeLegacyRun,
-} from "../bench"
+  writeRun,
+} from "../bench-runs.server"
+import { benchRunSchema, payloadMeasurementSchema } from "@/lib/bench-schemas"
 
 // The shape the first benchmark page saved: payload rows without args,
 // end-to-end cells keyed "mode|label" with whatever it happened to record.
@@ -110,5 +115,53 @@ describe("payloadMeasurementSchema", () => {
         error: null,
       }).success
     ).toBe(true)
+  })
+})
+
+describe("listSavedRuns", () => {
+  const cwd = process.cwd()
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "bench-runs-"))
+    process.chdir(dir)
+    await mkdir(RESULTS_DIR, { recursive: true })
+  })
+
+  afterEach(async () => {
+    process.chdir(cwd)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("reads current and v1 runs, newest first, and names the rest", async () => {
+    const current = upgradeLegacyRun(legacy, "current.json")
+    if (!current) throw new Error("fixture did not upgrade")
+    await writeRun("2026-10-01T10-00-00-current.json", current)
+    await writeFile(
+      join(RESULTS_DIR, "2026-09-14T22-02-32-run.json"),
+      JSON.stringify(legacy)
+    )
+    await writeFile(join(RESULTS_DIR, "2026-09-20T08-00-00-broken.json"), "{")
+    await writeFile(join(RESULTS_DIR, "notes.txt"), "not a run")
+
+    const { runs, unreadable } = await listSavedRuns()
+
+    expect(runs.map((r) => r.file)).toEqual([
+      "2026-10-01T10-00-00-current.json",
+      "2026-09-14T22-02-32-run.json",
+    ])
+    expect(runs[1].run.name).toBe("run")
+    expect(unreadable).toEqual(["2026-09-20T08-00-00-broken.json"])
+  })
+
+  it("returns no runs before the first one is saved", async () => {
+    await rm(RESULTS_DIR, { recursive: true })
+    expect(await listSavedRuns()).toEqual({ runs: [], unreadable: [] })
+  })
+
+  it("throws when the results folder can't be read", async () => {
+    await rm(RESULTS_DIR, { recursive: true })
+    await writeFile(RESULTS_DIR, "")
+    await expect(listSavedRuns()).rejects.toThrow(/ENOTDIR/)
   })
 })

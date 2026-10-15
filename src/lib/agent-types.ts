@@ -2,7 +2,7 @@
 // Everything in this file is safe to import from the browser: plain types
 // and a few constant tables the chat and benchmark pages render from.
 //
-// WHY: `src/server/agent.ts` also pulls in js-tiktoken (a 1 MB encoder
+// WHY: `src/server/agent.server.ts` also pulls in js-tiktoken (a 1 MB encoder
 //      table), the SerpApi SDK and the OpenAI client at module scope. A
 //      client component that value-imported a constant from that module
 //      dragged the whole thing into the browser bundle. Keeping the shared

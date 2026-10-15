@@ -10,9 +10,9 @@ import {
   jobView,
   queue,
   stopRuns,
-  writeFileAtomic,
 } from "../bench-job.server"
-import type { StartJobInput } from "../bench"
+import { writeFileAtomic } from "../bench-runs.server"
+import type { StartJobInput } from "@/lib/bench-schemas"
 
 describe("describeMissingAnswer", () => {
   it("says the model kept searching when its last reply was a tool call", () => {

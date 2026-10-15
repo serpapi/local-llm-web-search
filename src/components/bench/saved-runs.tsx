@@ -1,6 +1,6 @@
 import { FilePlus, FolderOpen, Loader2, Save } from "lucide-react"
 
-import type { SavedBenchRun } from "@/server/bench"
+import type { SavedBenchRun } from "@/lib/bench-schemas"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {

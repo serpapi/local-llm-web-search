@@ -12,21 +12,16 @@ export type ExampleGroup = {
   items: Array<ExampleQuestion>
 }
 
-// A flight date ~2 months out, computed when the examples are built so
-// the Flights example never points at a past date as the app ages.
-function exampleFlightDate(): string {
-  const d = new Date()
-  d.setMonth(d.getMonth() + 2)
-  return d.toISOString().slice(0, 10)
-}
-
-// A 3-night hotel stay on the same horizon as the flight example, so the
-// trip-planning example reads as one coherent itinerary.
-function exampleHotelDates(): { checkIn: string; checkOut: string } {
+// The flight and hotel examples share one trip about two months out. The
+// flight date is also the hotel check-in, and the stay is three nights. The
+// dates are computed when the examples are built, so they never point at a
+// past date as the app ages. The math is in UTC, so the server and the
+// browser compute the same dates whatever their time zones.
+export function exampleTripDates(): { checkIn: string; checkOut: string } {
   const checkIn = new Date()
-  checkIn.setMonth(checkIn.getMonth() + 2)
+  checkIn.setUTCMonth(checkIn.getUTCMonth() + 2)
   const checkOut = new Date(checkIn)
-  checkOut.setDate(checkOut.getDate() + 3)
+  checkOut.setUTCDate(checkOut.getUTCDate() + 3)
   return {
     checkIn: checkIn.toISOString().slice(0, 10),
     checkOut: checkOut.toISOString().slice(0, 10),
@@ -34,6 +29,7 @@ function exampleHotelDates(): { checkIn: string; checkOut: string } {
 }
 
 export function buildExamples(): Array<ExampleGroup> {
+  const { checkIn, checkOut } = exampleTripDates()
   return [
     {
       title: "Live data",
@@ -57,11 +53,11 @@ export function buildExamples(): Array<ExampleGroup> {
         },
         {
           label: "Flights",
-          question: `Flights from JFK to LAX on ${exampleFlightDate()}`,
+          question: `Flights from JFK to LAX on ${checkIn}`,
         },
         {
           label: "Hotels",
-          question: `Hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut} for 2 adults`,
+          question: `Hotels in Barcelona from ${checkIn} to ${checkOut} for 2 adults`,
         },
         {
           label: "Shopping",
@@ -92,7 +88,7 @@ export function buildExamples(): Array<ExampleGroup> {
         },
         {
           label: "Trip planning",
-          question: `Find flights from JFK to BCN on ${exampleHotelDates().checkIn} and hotels in Barcelona from ${exampleHotelDates().checkIn} to ${exampleHotelDates().checkOut}`,
+          question: `Find flights from JFK to BCN on ${checkIn} and hotels in Barcelona from ${checkIn} to ${checkOut}`,
         },
       ],
     },

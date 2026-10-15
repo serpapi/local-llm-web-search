@@ -2,7 +2,7 @@ import { useState } from "react"
 import { ChevronRight, Loader2, Play, Square } from "lucide-react"
 
 import type { ToolOutput } from "@/lib/agent-types"
-import type { E2ECell, PayloadMeasurement } from "@/server/bench"
+import type { E2ECell, PayloadMeasurement } from "@/lib/bench-schemas"
 import type { ExampleGroup, ExampleQuestion } from "@/lib/examples"
 import { TOOL_OUTPUTS, TOOL_OUTPUT_META } from "@/lib/agent-types"
 import { Badge } from "@/components/ui/badge"

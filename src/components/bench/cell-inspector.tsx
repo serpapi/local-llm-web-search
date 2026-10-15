@@ -1,7 +1,7 @@
 import { FlaskConical } from "lucide-react"
 
 import type { ToolOutput } from "@/lib/agent-types"
-import type { E2ECell, PayloadMeasurement } from "@/server/bench"
+import type { E2ECell, PayloadMeasurement } from "@/lib/bench-schemas"
 import { TOOL_OUTPUT_META } from "@/lib/agent-types"
 import { RestrictorPaths } from "@/components/restrictor-paths"
 import { Badge } from "@/components/ui/badge"

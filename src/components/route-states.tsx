@@ -1,5 +1,7 @@
+import { useQueryErrorResetBoundary } from "@tanstack/react-query"
 import { Link, useRouter } from "@tanstack/react-router"
 import { ArrowLeft, SearchX } from "lucide-react"
+import { useEffect } from "react"
 
 import type { ErrorComponentProps } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
@@ -46,6 +48,13 @@ export function NotFound() {
  */
 export function RouteError({ error }: ErrorComponentProps) {
   const router = useRouter()
+  const queryErrorResetBoundary = useQueryErrorResetBoundary()
+  // WHY: the pages read their data with useSuspenseQuery, which throws a
+  //      failed query's error again until Query's error boundary is reset.
+  //      Resetting it here lets Try again, or a later visit, fetch anew.
+  useEffect(() => {
+    queryErrorResetBoundary.reset()
+  }, [queryErrorResetBoundary])
   return (
     <div
       role="alert"

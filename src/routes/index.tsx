@@ -16,6 +16,7 @@ import {
   Wrench,
 } from "lucide-react"
 import {
+  noop,
   useMutation,
   useQuery,
   useQueryClient,
@@ -29,6 +30,7 @@ import type {
   ChatMessage,
   ChatSearches,
   ChatSession,
+  ChatTurnInput,
   ModelContextSnapshot,
   ToolCallSummary,
 } from "@/lib/chat"
@@ -43,7 +45,6 @@ import type {
   ToolOutput,
 } from "@/lib/agent-types"
 import type { FullFetchState } from "@/hooks/use-full-responses"
-import type { ChatTurnInput } from "@/server/chat"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -96,13 +97,13 @@ import {
   fitBreakdown,
   isToolOutput,
 } from "@/lib/agent-types"
-import { listModels } from "@/server/models"
+import { listModels } from "@/server/models.functions"
 import {
   chatQueries,
   clearChatSession,
   restoreChatSession,
   sendChatMessage,
-} from "@/server/chat"
+} from "@/server/chat.functions"
 
 export const Route = createFileRoute("/")({
   // WHY: the model list is route data, so it loads with the route instead of
@@ -110,7 +111,7 @@ export const Route = createFileRoute("/")({
   //      being offline is a normal state the composer explains inline. The
   //      chat session goes into the query cache with it, so a reload renders
   //      the conversation (and a turn still running) straight away.
-  loader: async ({ context }): Promise<ChatLoaderData> => {
+  loader: async ({ context }) => {
     const [models] = await Promise.all([
       listModels().then(
         (list) => ({ models: list, error: null }),
@@ -129,11 +130,6 @@ export const Route = createFileRoute("/")({
   headers: () => ({ "Cache-Control": "private, no-store" }),
   component: App,
 })
-
-type ChatLoaderData = {
-  models: Array<ModelInfo>
-  error: string | null
-}
 
 const TOOL_OUTPUT_STORAGE_KEY = "local-llm-web-search:tool-output"
 const MODEL_STORAGE_KEY = "local-llm-web-search:model"
@@ -196,7 +192,7 @@ const CL100K_NOTE =
 function App() {
   const { models: availableModels, error: modelsError } = Route.useLoaderData()
   const queryClient = useQueryClient()
-  // The conversation lives on the server (`src/server/chat.ts`). The query
+  // The conversation lives on the server (`chat-session.server.ts`). The query
   // cache holds the page's copy; the loader filled it.
   const { data: session } = useSuspenseQuery(chatQueries.session())
   const { messages, last } = session
@@ -230,9 +226,7 @@ function App() {
     if (!turnRunning || status === undefined || stillRunning) return
     // Done, or another tab switched the session: adopt the server's. A
     // failed read keeps the last state on screen; the next poll retries.
-    queryClient
-      .fetchQuery({ ...chatQueries.session(), staleTime: 0 })
-      .catch(() => {})
+    queryClient.query({ ...chatQueries.session(), staleTime: 0 }).catch(noop)
     // WHY: `dataUpdatedAt`, not `status`: an unchanged poll keeps the same
     //      object, and a failed session read must try again on the next one.
   }, [statusQuery.dataUpdatedAt])
@@ -1084,7 +1078,7 @@ function HeroTotal({
     budget && pctUsed > 0 && pctUsed < 1 ? "<1%" : `${Math.round(pctUsed)}%`
   const maxLabel =
     modelContext && modelContext.max !== modelContext.loaded
-      ? `model max ${modelContext.max.toLocaleString()}`
+      ? `model max ${modelContext.max.toLocaleString("en-US")}`
       : null
   const reasoning = exactUsage?.reasoningTokens ?? 0
 
@@ -1100,11 +1094,11 @@ function HeroTotal({
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-3xl font-semibold tabular-nums">
             {exactUsage ? "" : "~"}
-            {total.toLocaleString()}
+            {total.toLocaleString("en-US")}
           </span>
           {budget != null ? (
             <span className="font-mono text-base text-muted-foreground tabular-nums">
-              / {budget.toLocaleString()}
+              / {budget.toLocaleString("en-US")}
             </span>
           ) : (
             <span className="text-sm text-muted-foreground">tokens</span>
@@ -1133,9 +1127,9 @@ function HeroTotal({
           }
         >
           {exactUsage
-            ? `${exactUsage.promptTokens.toLocaleString()} in · ${exactUsage.completionTokens.toLocaleString()} out${
+            ? `${exactUsage.promptTokens.toLocaleString("en-US")} in · ${exactUsage.completionTokens.toLocaleString("en-US")} out${
                 reasoning > 0
-                  ? ` (${reasoning.toLocaleString()} reasoning)`
+                  ? ` (${reasoning.toLocaleString("en-US")} reasoning)`
                   : ""
               }`
             : "estimated"}
@@ -1164,8 +1158,8 @@ function TurnSummary({
         >
           <span>This turn, {totalUsage.completions} calls</span>
           <span>
-            {totalUsage.promptTokens.toLocaleString()} in ·{" "}
-            {totalUsage.completionTokens.toLocaleString()} out
+            {totalUsage.promptTokens.toLocaleString("en-US")} in ·{" "}
+            {totalUsage.completionTokens.toLocaleString("en-US")} out
           </span>
         </li>
       ) : null}
@@ -1174,7 +1168,7 @@ function TurnSummary({
         title="Tool definitions, system prompt and history: what the next question starts from. Search results are not kept between questions, only the questions and answers."
       >
         <span>Next question starts at</span>
-        <span>~{nextQuestionTokens.toLocaleString()}</span>
+        <span>~{nextQuestionTokens.toLocaleString("en-US")}</span>
       </li>
     </ul>
   )
@@ -1219,7 +1213,8 @@ function SearchesCard({
           SerpApi searches
         </span>
         <span className="font-mono text-xs tabular-nums">
-          {(searches.model + searches.compare).toLocaleString()} this chat
+          {(searches.model + searches.compare).toLocaleString("en-US")} this
+          chat
         </span>
       </div>
       <ul className="flex flex-col gap-1 text-[11px]">
@@ -1264,7 +1259,7 @@ function StackedBar({
             key={seg.key}
             className={`${seg.color} transition-[width] duration-500 ease-out`}
             style={{ width: `${seg.pct * 100}%` }}
-            title={`${seg.label}: ${seg.count.toLocaleString()} (${Math.round(seg.pct * 100)}%)`}
+            title={`${seg.label}: ${seg.count.toLocaleString("en-US")} (${Math.round(seg.pct * 100)}%)`}
           />
         )
       })}
@@ -1300,7 +1295,7 @@ function SegmentList({
               {seg.count > 0 && !(fitted && seg.key === "final_response")
                 ? "~"
                 : ""}
-              {seg.count.toLocaleString()}
+              {seg.count.toLocaleString("en-US")}
             </span>
             <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
               {pct > 0 ? `${pct}%` : seg.count > 0 ? "<1%" : "–"}
@@ -1440,7 +1435,7 @@ function JsonRestrictorCard({
             title={CL100K_NOTE}
             className="font-mono text-base font-semibold tabular-nums"
           >
-            ~{filteredTokens.toLocaleString()} tok
+            ~{filteredTokens.toLocaleString("en-US")} tok
           </span>
         </div>
       )}
@@ -1568,7 +1563,7 @@ function ReductionBar({
         title={CL100K_NOTE}
         className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums"
       >
-        ~{tokens.toLocaleString()}
+        ~{tokens.toLocaleString("en-US")}
       </span>
     </div>
   )

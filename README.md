@@ -161,22 +161,22 @@ There's no CI, so run `bun run typecheck`, `bun run lint` and `bun run test` bef
 
 ## Where things live
 
-| Path                        | What's in it                                                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `src/server/agent.ts`       | The agent: tools, SerpApi calls, model loading and `runAgentTurn`. The only file that reads the SerpApi key. |
-| `src/server/restrictors.ts` | The `json_restrictor` strings for each engine, for JSON and for Markdown.                                    |
-| `src/server/chat.ts`        | Server functions for the chat. The session itself is in `chat-session.server.ts`.                            |
-| `src/server/models.ts`      | The server function that lists models.                                                                       |
-| `src/server/bench.ts`       | Server functions for the benchmark page. The runner is in `bench-job.server.ts`.                             |
-| `src/routes/index.tsx`      | The chat page.                                                                                               |
-| `src/routes/bench.tsx`      | The benchmark page. Its components are in `src/components/bench/`.                                           |
-| `src/lib/agent-types.ts`    | Types and constants shared by the browser and the server.                                                    |
-| `src/components/ui/*`       | shadcn/ui components.                                                                                        |
-| `src/**/__tests__/*`        | Unit tests.                                                                                                  |
+| Path                             | What's in it                                                                                                                        |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/agent.server.ts`     | The agent: tools, SerpApi calls, model loading and `runAgentTurn`. The only file that reads the SerpApi key.                        |
+| `src/server/restrictors.ts`      | The `json_restrictor` strings for each engine, for JSON and for Markdown.                                                           |
+| `src/server/chat.functions.ts`   | Server functions for the chat. The session itself is in `chat-session.server.ts`.                                                   |
+| `src/server/models.functions.ts` | The server function that lists models.                                                                                              |
+| `src/server/bench.functions.ts`  | Server functions for the benchmark page. `bench-job.server.ts` runs the benchmark, and `bench-runs.server.ts` saves and loads runs. |
+| `src/routes/index.tsx`           | The chat page.                                                                                                                      |
+| `src/routes/bench.tsx`           | The benchmark page. Its components are in `src/components/bench/`.                                                                  |
+| `src/lib/agent-types.ts`         | Types and constants shared by the browser and the server.                                                                           |
+| `src/components/ui/*`            | shadcn/ui components.                                                                                                               |
+| `src/**/__tests__/*`             | Unit tests.                                                                                                                         |
 
 ## Security
 
-- Only `src/server/agent.ts` reads `SERPAPI_API_KEY`, and it only runs on the server. If any browser code imports it, the build fails.
+- Only `src/server/agent.server.ts` reads `SERPAPI_API_KEY`, and it only runs on the server. If any browser code imports it, the build fails.
 - The app never logs the key. The development query log removes anything that looks like a secret, and a production build keeps no log.
 - `bun run start` only listens on 127.0.0.1. Set `NITRO_HOST` to open it to other machines, but anyone who can reach the app can spend your SerpApi searches.
 

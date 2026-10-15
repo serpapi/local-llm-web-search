@@ -21,7 +21,7 @@ import {
   usageOf,
 } from "../bench"
 
-import type { BenchJob, E2ECell, PayloadMeasurement } from "@/server/bench"
+import type { BenchJob, E2ECell, PayloadMeasurement } from "@/lib/bench-schemas"
 
 const completed = (over: Partial<E2ECell> = {}): E2ECell =>
   ({

@@ -2,6 +2,8 @@
 // lives on the server (`src/server/chat-session.server.ts`) so a reload, a
 // closed tab or an HMR update never loses it; the page renders these.
 
+import { z } from "zod"
+
 import type {
   Breakdown,
   ExactUsage,
@@ -10,6 +12,19 @@ import type {
   Source,
   ToolCallInfo,
 } from "@/lib/agent-types"
+import { TOOL_OUTPUTS } from "@/lib/agent-types"
+
+/** A question for the agent. `sendChatMessage` validates it. */
+export const chatTurnInput = z.object({
+  question: z.string().trim().min(1).max(4000),
+  model: z.string().min(1),
+  contextLength: z.number().int().positive(),
+  maxContextLength: z.number().int().positive(),
+  toolUseTrained: z.boolean().optional(),
+  toolOutput: z.enum(TOOL_OUTPUTS),
+})
+
+export type ChatTurnInput = z.infer<typeof chatTurnInput>
 
 // What a message needs to show its tool badges. The full responses stay on
 // `ChatTurnStats.toolCalls`, for the last turn only: kept on every message

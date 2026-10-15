@@ -24,7 +24,8 @@ export function getRouter() {
     scrollRestoration: true,
     defaultPreload: "intent",
     // WHY: Query decides whether a preload needs fresh data. The /bench
-    //      loader reads the live job without Query, so it always reloads.
+    //      loader reads the job with `staleTime: 0`, so Query fetches it
+    //      again on every preload and visit.
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: RouteError,
   })
