@@ -2870,7 +2870,7 @@ export const runAgentTurn = async (
         //       time than actually passed. Each call's own duration still
         //       ships as `serpApiMs`.
         const toolPhaseStart = performance.now()
-        const executed = await Promise.all(
+        const settled = await Promise.allSettled(
           calls.map(async (call) => {
             const validated = validateToolArgs(call.name, call.args)
             // `validateToolArgs` already rejected unknown tools, so the
@@ -2907,6 +2907,10 @@ export const runAgentTurn = async (
             ) {
               const query = String(validated.query ?? "")
               if (query) {
+                // NOTE: if this search throws, the whole call fails and the
+                //       Finance search above goes uncounted. Catching it
+                //       would hide the error, such as an account out of
+                //       searches, behind an empty quote.
                 const fbStart = performance.now()
                 const fallback = await executeTool(
                   "google_search",
@@ -2942,6 +2946,13 @@ export const runAgentTurn = async (
         )
         phases.toolExecutionMs += Math.round(performance.now() - toolPhaseStart)
 
+        // WHY: a failed call doesn't refund the searches the others in its
+        //      round already spent. Record every call that finished, then
+        //      fail the round with the first error, so the search count
+        //      matches what SerpApi charged.
+        const executed = settled.flatMap((r) =>
+          r.status === "fulfilled" ? [r.value] : []
+        )
         for (const r of executed) {
           const responseTokens = countTokens(r.response)
           toolCalls.push({
@@ -2959,6 +2970,8 @@ export const runAgentTurn = async (
           breakdown.tool_call += countTokens(r.call.rawArgs)
           breakdown.tool_result += responseTokens
         }
+        const failed = settled.find((r) => r.status === "rejected")
+        if (failed?.status === "rejected") throw failed.reason
 
         // WHY: rebuild the assistant turn so the second completion
         //      sees a clean structured `tool_calls` array, no matter
@@ -2974,10 +2987,10 @@ export const runAgentTurn = async (
             function: { name: c.name, arguments: c.rawArgs },
           })),
         })
-        for (const [i, r] of executed.entries()) {
+        for (const r of executed) {
           messages.push({
             role: "tool",
-            tool_call_id: calls[i].id,
+            tool_call_id: r.call.id,
             // Markdown goes to the model as-is; JSON is serialised.
             content:
               typeof r.response === "string"
