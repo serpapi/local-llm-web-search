@@ -106,7 +106,7 @@ A failed cell counts as a failure, never as zero tokens. Click a cell to see the
 
 - **retried.** The model wrote no answer after the search, or LM Studio couldn't parse its reply twice, so the agent asked once more with the search results as plain text.
 - **N rounds.** The model searched again after reading the results, to check an answer or fix a search that missed.
-- **cut off.** The answer hit the 4,096-token output limit. On models that think before they answer, the thinking counts toward that limit.
+- **cut off.** The answer hit the 8,192-token output limit. On models that think before they answer, the thinking counts toward that limit.
 - **over context.** Only in older runs. The prompt was bigger than the loaded window and an MLX model ran it anyway. The agent now stops these turns.
 
 ## Design notes
@@ -118,6 +118,8 @@ Small models, around 4B to 9B, are good at picking a tool by name but often get 
 ### Why `json_restrictor`
 
 A raw SerpApi response runs from 3,000 to more than 50,000 tokens depending on the engine, and a 9B model with a 32K window can't fit the large ones. With `json_restrictor`, SerpApi only returns the fields you list, such as the top five organic results, the summary block and a few headlines.
+
+Google often leaves the AI Overview out of a web search and sends a token for it instead. When that happens, the agent fetches the overview with the token right away, which costs one more SerpApi search.
 
 ### How the key stays on the server
 

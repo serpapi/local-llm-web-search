@@ -26,8 +26,10 @@ export type ToolOutput = "json" | "markdown" | "markdown-full"
 // Ceiling on generated tokens per completion, reasoning included. At an
 // earlier 1,500, a benchmark run cut 13 answers short, all in Markdown
 // modes, and six came back empty because the model spent the whole budget
-// thinking. The system prompt, not this cap, keeps answers short.
-export const MAX_COMPLETION_TOKENS = 4096
+// thinking. At 4,096, Flint spent all of it reasoning three times on
+// 2026-10-21 and failed two benchmark cells with no answer. The system
+// prompt, not this cap, keeps answers short.
+export const MAX_COMPLETION_TOKENS = 8192
 
 export const TOOL_OUTPUTS = ["json", "markdown", "markdown-full"] as const
 
@@ -126,8 +128,9 @@ export type ToolCallInfo = {
   // Which search round of the turn ran this call, from 1. Calls in the same
   // round ran in parallel. Missing on turns saved before it existed.
   round?: number
-  // SerpApi searches this call made: 2 when a Finance call found no quote
-  // and fell back to a web search, else 1.
+  // SerpApi searches this call made: 1, plus 1 when a web search fetched
+  // the AI Overview Google deferred, plus the web search a Finance call
+  // falls back to when it finds no quote.
   searches?: number
 }
 

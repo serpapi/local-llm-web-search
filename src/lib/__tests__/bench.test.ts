@@ -14,6 +14,8 @@ import {
   isActiveJob,
   measuredTokens,
   pairedPromptChange,
+  payloadCalls,
+  payloadCredits,
   payloadTotals,
   queuedRunName,
   relativeChange,
@@ -370,5 +372,15 @@ describe("queuedRunName", () => {
     expect(queuedRunName("cap-4096", "google/gemma-4-12b-qat")).toBe(
       "cap-4096-gemma-4-12b-qat"
     )
+  })
+})
+
+describe("payloadCredits", () => {
+  it("counts one search per tool and mode, plus a deferred AI Overview in each restricted Search mode", () => {
+    // 7 tools x 4 modes, and Search in JSON and Markdown can fetch an overview.
+    expect(payloadCredits(payloadCalls())).toBe(30)
+    expect(
+      payloadCredits([{ label: "News", name: "google_news_search", args: {} }])
+    ).toBe(4)
   })
 })

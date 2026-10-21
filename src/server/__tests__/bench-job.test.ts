@@ -32,7 +32,7 @@ describe("describeMissingAnswer", () => {
   })
 
   it("says when the reasoning used the whole token budget", () => {
-    expect(describeMissingAnswer("", true)).toMatch(/whole 4,096-token budget/)
+    expect(describeMissingAnswer("", true)).toMatch(/whole 8,192-token budget/)
   })
 
   it("separates an unusable reply from an empty one", () => {

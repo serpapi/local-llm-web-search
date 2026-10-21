@@ -140,7 +140,7 @@ These came up in long test conversations, mostly with Gemma 4 12B QAT, and are n
 
 When you run `bun dev`, the app also serves [/bench](http://localhost:3005/bench), linked from the Benchmark button in the chat header. It only exists in development, so a production build can't spend SerpApi credits from it.
 
-- **Payload size** runs one search per tool for each mode, plus the full JSON response with no restrictor (28 searches in all), and compares their sizes. It doesn't use a model.
+- **Payload size** runs one search per tool for each mode, plus the full JSON response with no restrictor (up to 30 searches), and compares their sizes. It doesn't use a model.
 - **End to end** sends each question you pick through the full agent with each model you pick, in a fresh conversation every time. It shows tokens, time and the tools called for each one. It doesn't check whether the answers are right.
 
 A run keeps going if you reload the page. Results are saved to `bench/results/`, which git ignores.
