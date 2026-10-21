@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import type { FullResponseResult, ToolCallInfo } from "@/lib/agent-types"
 import type { ChatSession } from "@/lib/chat"
@@ -63,7 +63,9 @@ export function canCompare(calls: Array<ToolCallInfo>): boolean {
  */
 export function useFullResponses(
   turnId: string | null,
-  toolCalls: Array<ToolCallInfo>
+  toolCalls: Array<ToolCallInfo>,
+  // The turn the server already measured, from the session.
+  measuredTurnId: string | null
 ) {
   const queryClient = useQueryClient()
   const [fetched, setFetched] = useState<{
@@ -76,13 +78,15 @@ export function useFullResponses(
   const fullFetch = fetched?.key === key ? fetched.state : IDLE
   const canMeasure = turnId !== null && canCompare(toolCalls)
 
-  function measure() {
+  function measure(cachedOnly = false) {
     if (!canMeasure) return
     if (fullFetch.status === "loading" || fullFetch.status === "done") return
     const settle = (state: FullFetchState) =>
       setFetched((prev) => (prev?.key === key ? { key, state } : prev))
     setFetched({ key, state: { status: "loading" } })
-    measureFullResponses({ data: { turnId } })
+    measureFullResponses({
+      data: cachedOnly ? { turnId, cachedOnly } : { turnId },
+    })
       .then(({ results, searches }) => {
         // The searches it spent show in the sidebar's count right away.
         queryClient.setQueryData(
@@ -99,5 +103,12 @@ export function useFullResponses(
       )
   }
 
-  return { fullFetch, canMeasure, measure }
+  // A comparison the server already holds (say, before a reload) costs no
+  // search, so it loads without a click. Cache only: if that measurement
+  // failed in the meantime, nothing new runs.
+  useEffect(() => {
+    if (measuredTurnId !== null && measuredTurnId === turnId) measure(true)
+  }, [measuredTurnId, turnId])
+
+  return { fullFetch, canMeasure, measure: () => measure() }
 }
