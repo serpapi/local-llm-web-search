@@ -121,9 +121,10 @@ function lmStudioHeaders(
 // first inference; the others fail fast. SerpApi's value is enforced by the
 // SDK config below, not per-call.
 const LM_STUDIO_FETCH_TIMEOUT_MS = 10_000
-// Sized to let a completion reach `MAX_COMPLETION_TOKENS`. Qwen 3.8 27B on
-// a MacBook Pro M5 Pro generates 17.6 tokens/s, so 4,096 tokens take about
-// 233 s, reasoning included. At two minutes, a long direct answer timed out.
+// Qwen 3.8 27B on a MacBook Pro M5 Pro generates 17.6 tokens/s, so this
+// lets it write about 5,000 tokens, reasoning included: short of
+// `MAX_COMPLETION_TOKENS`, which faster models such as Flint (about 90
+// tokens/s) can reach. At two minutes, a long direct answer timed out.
 const LM_STUDIO_CHAT_TIMEOUT_MS = 300_000
 // Markdown (Raw) also hands the model up to 30K tokens to read first, at a
 // few hundred tokens per second on a laptop.

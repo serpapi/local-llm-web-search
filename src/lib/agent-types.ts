@@ -26,8 +26,10 @@ export type ToolOutput = "json" | "markdown" | "markdown-full"
 // Ceiling on generated tokens per completion, reasoning included. At an
 // earlier 1,500, a benchmark run cut 13 answers short, all in Markdown
 // modes, and six came back empty because the model spent the whole budget
-// thinking. The system prompt, not this cap, keeps answers short.
-export const MAX_COMPLETION_TOKENS = 4096
+// thinking. At 4,096, Flint spent all of it reasoning three times on
+// 2026-10-21 and failed two benchmark cells with no answer. The system
+// prompt, not this cap, keeps answers short.
+export const MAX_COMPLETION_TOKENS = 8192
 
 export const TOOL_OUTPUTS = ["json", "markdown", "markdown-full"] as const
 

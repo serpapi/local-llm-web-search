@@ -106,7 +106,7 @@ A failed cell counts as a failure, never as zero tokens. Click a cell to see the
 
 - **retried.** The model wrote no answer after the search, or LM Studio couldn't parse its reply twice, so the agent asked once more with the search results as plain text.
 - **N rounds.** The model searched again after reading the results, to check an answer or fix a search that missed.
-- **cut off.** The answer hit the 4,096-token output limit. On models that think before they answer, the thinking counts toward that limit.
+- **cut off.** The answer hit the 8,192-token output limit. On models that think before they answer, the thinking counts toward that limit.
 - **over context.** Only in older runs. The prompt was bigger than the loaded window and an MLX model ran it anyway. The agent now stops these turns.
 
 ## Design notes
