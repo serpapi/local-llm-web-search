@@ -53,6 +53,31 @@ export function isRestrictorTool(name: string): name is RestrictorTool {
   return (RESTRICTOR_TOOLS as ReadonlyArray<string>).includes(name)
 }
 
+// The AI Overview fields the model reads, per output mode. A search keeps
+// them under `ai_overview` together with `page_token`, and the follow-up
+// request in `AI_OVERVIEW_RESTRICTORS` asks for the same ones, so an
+// overview reads the same whether Google sent it inline or deferred it.
+// `references` are the pages the overview cites, so the model can link
+// them instead of an organic result that doesn't say the same thing.
+const AI_OVERVIEW_FIELDS = {
+  json: "text_blocks[0:6].{snippet,list[0:5].{title,snippet}},references[0:3].{title,link,source}",
+  markdown:
+    "text_blocks[0:8].{snippet,list[0:6].{title,snippet}},references[0:4].{title,link,source}",
+}
+
+/**
+ * Restrictors for the follow-up `google_ai_overview` request. Google
+ * defers the AI Overview on many searches: the response then carries only
+ * `ai_overview.page_token`, which expires within a minute, and the
+ * overview itself costs one more request (see `followDeferredOverview` in
+ * `agent.server.ts`). On 2026-10-21 Google deferred it for all seven
+ * searches about SerpApi's CEO, and only the overview named him.
+ */
+export const AI_OVERVIEW_RESTRICTORS = {
+  json: `ai_overview.{${AI_OVERVIEW_FIELDS.json}}`,
+  markdown: `ai_overview.{${AI_OVERVIEW_FIELDS.markdown}}`,
+}
+
 /**
  * Per-tool `json_restrictor` strings for JSON mode, one per engine. Each is
  * a comma-separated list of paths SerpApi keeps in the response. These are
@@ -71,17 +96,19 @@ export function isRestrictorTool(name: string): name is RestrictorTool {
  */
 export const RESTRICTORS: Record<RestrictorTool, string> = {
   // Only the branches present for a query come through: `answer_box`
-  // (factual queries), `ai_overview` and `related_questions` (where Google
-  // now puts many direct answers), `knowledge_graph` (entity queries), and
-  // the top-5 organic results as the universal fallback. Without the AI
-  // Overview, "Who is the current CEO of Perplexity?" reached the model as
-  // five unrelated organic results and it kept searching instead of
-  // answering. When Google defers the overview (`ai_overview.page_token`
-  // only), no text block comes through and the other branches carry it.
+  // (factual queries), `ai_overview` (where Google now puts most direct
+  // answers), `knowledge_graph` (entity queries), and the top-5 organic
+  // results as the universal fallback. Without the AI Overview, "Who is
+  // the current CEO of Perplexity?" reached the model as five unrelated
+  // organic results and it kept searching instead of answering. When
+  // Google defers the overview, `page_token` comes through and the agent
+  // fetches the overview with it. `related_questions` is left out: in 10
+  // searches on 2026-10-21, none of the 40 questions came with an answer,
+  // so a question about SerpApi's CEO reached the model with "Who is the
+  // 2nd CEO of Google?" and nothing else.
   google_search: [
     "answer_box.{answer,snippet,title}",
-    "ai_overview.text_blocks[0:6].{snippet,list[0:5].{title,snippet}}",
-    "related_questions[0:3].{question,snippet}",
+    `ai_overview.{page_token,${AI_OVERVIEW_FIELDS.json}}`,
     "knowledge_graph.{title,type,description,source.{name,link}}",
     "organic_results[0:5].{title,link,displayed_link,snippet,date}",
     "error",
@@ -168,19 +195,19 @@ export const RESTRICTORS: Record<RestrictorTool, string> = {
 export const MARKDOWN_RESTRICTORS: Record<RestrictorTool, string> = {
   // Organic results lead, five of them, as in JSON mode. When Google has no
   // AI Overview, answer box or knowledge graph for a question, the answer
-  // has to come from the organic results or the related questions. With 3
-  // organic results, listed after the related questions, Qwen 3.8, Gemma 4
-  // and Bonsai each ran out of search rounds on at least one question about
-  // SerpApi's CEO, founding year or prices. SerpApi writes the
-  // sections in the order the paths are listed. With five results, Search
-  // measured 466 tokens on /bench, against 620 in JSON.
+  // has to come from the organic results. With 3 organic results, listed
+  // after the related questions, Qwen 3.8, Gemma 4 and Bonsai each ran out
+  // of search rounds on at least one question about SerpApi's CEO,
+  // founding year or prices. SerpApi writes the sections in the order the
+  // paths are listed. With five results, Search measured 466 tokens on
+  // /bench, against 620 in JSON. The fields and the dropped
+  // `related_questions` follow `RESTRICTORS.google_search`.
   google_search: [
     "organic_results[0:5].{title,link,snippet,date}",
     "answer_box.{answer,snippet,title,list}",
-    "ai_overview.text_blocks[0:8].{snippet,list[0:6].{title,snippet}}",
+    `ai_overview.{page_token,${AI_OVERVIEW_FIELDS.markdown}}`,
     "knowledge_graph.{title,type,description,source.{name,link}}",
     "top_stories[0:3].{title,link,source,date}",
-    "related_questions[0:3].{question,snippet}",
     "error",
     "search_metadata.google_url",
   ].join(","),

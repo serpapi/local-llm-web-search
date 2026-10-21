@@ -15,6 +15,7 @@ import {
 import { z } from "zod"
 
 import {
+  AI_OVERVIEW_RESTRICTORS,
   MARKDOWN_RESTRICTORS,
   RESTRICTORS,
   isRestrictorTool,
@@ -1020,22 +1021,31 @@ export function toolParams(
 }
 
 /**
- * What one SerpApi tool call hands back to the agent loop.
+ * What one SerpApi request hands back.
  *
  * `payload` is exactly what the model receives as the tool result: a JSON
  * tree in `json` mode, a Markdown string in `markdown` mode. `searchUrl`
  * is the live SERP link, lifted out of `search_metadata` so the Sources
  * panel can show it without the model ever seeing it.
  */
-type ToolResult = {
+type SearchResult = {
   payload: JsonValue
   searchUrl: string | null
 }
 
 /**
+ * What one tool call hands back to the agent loop: the search result and
+ * the SerpApi searches it spent, 2 when it also fetched a deferred AI
+ * Overview.
+ */
+type ToolResult = SearchResult & { searches: number }
+
+/**
  * Run a tool's SerpApi call in the requested output mode. Pass
  * `restricted: false` for the full, untrimmed response the compare view
  * shows; the chat loop runs restricted unless the output mode opts out.
+ * A restricted web search also fetches the AI Overview when Google
+ * deferred it (`followDeferredOverview`).
  */
 export const executeTool = async (
   name: RestrictorTool,
@@ -1044,10 +1054,28 @@ export const executeTool = async (
   restricted = true
 ): Promise<ToolResult> => {
   const restrictor = restricted ? restrictorFor(name, output) : null
-  const params: Record<string, unknown> = {
-    ...toolParams(name, args),
-    ...(restrictor ? { json_restrictor: restrictor } : {}),
+  const result = await executeWithRetry(
+    {
+      ...toolParams(name, args),
+      ...(restrictor ? { json_restrictor: restrictor } : {}),
+    },
+    output
+  )
+  if (name !== "google_search" || !restrictor || output === "markdown-full") {
+    return { ...result, searches: 1 }
   }
+  const followed = await followDeferredOverview(result.payload, output)
+  return {
+    ...result,
+    payload: followed.payload,
+    searches: 1 + followed.searches,
+  }
+}
+
+async function executeWithRetry(
+  params: Record<string, unknown>,
+  output: ToolOutput
+): Promise<SearchResult> {
   try {
     return await executeWithParams(params, output)
   } catch (err) {
@@ -1071,7 +1099,7 @@ export const executeTool = async (
 async function executeWithParams(
   params: Record<string, unknown>,
   output: ToolOutput
-): Promise<ToolResult> {
+): Promise<SearchResult> {
   if (output !== "json") {
     const { searchUrl, body } = splitMarkdownFrontMatter(
       await serpApiMarkdown(params)
@@ -1082,6 +1110,106 @@ async function executeWithParams(
   const searchUrl = extractSearchUrl(json)
   if (json && typeof json === "object") delete json.search_metadata
   return { payload: json as JsonValue, searchUrl }
+}
+
+// SerpApi's Markdown for a deferred overview: the section holds the token
+// alone, because the search restrictor keeps no other field of a
+// deferred overview.
+const DEFERRED_OVERVIEW_MD = /^## Ai Overview\n+- Page Token: (\S+)\n*/m
+
+/**
+ * Fetch the AI Overview when Google deferred it, and put it where the
+ * page token was. Returns the payload the model reads and the extra
+ * searches spent: 1 when the follow-up ran, 0 when there was no token or
+ * the request failed.
+ *
+ * WHY: Google now defers the overview on many searches, and the response
+ *      carries only `ai_overview.page_token`. On 2026-10-21 every search
+ *      about SerpApi's CEO came back that way; the overview was the one
+ *      place that named him, and without it four models guessed or gave
+ *      up. The token expires within a minute, so this runs right after
+ *      the search.
+ *
+ * NOTE: a search SerpApi serves from its one-hour cache carries the old
+ *       token, but the follow-up with that token and restrictor is cached
+ *       too, so it still returns the overview (checked 2026-10-21, 40
+ *       minutes after the first search). Only a token no one followed
+ *       before it expired comes back empty.
+ *
+ * The overview is optional: a failed follow-up drops the token and keeps
+ * the search, rather than failing a call that already has results. It
+ * gets the main search's single retry on a transient error, because a
+ * token whose first follow-up failed stays unanswerable for as long as
+ * SerpApi caches the search. Exported with an injectable fetch for tests.
+ */
+export async function followDeferredOverview(
+  payload: JsonValue,
+  output: "json" | "markdown",
+  fetch: (
+    params: Record<string, unknown>,
+    output: ToolOutput
+  ) => Promise<SearchResult> = executeWithRetry
+): Promise<{ payload: JsonValue; searches: number }> {
+  const token = deferredOverviewToken(payload)
+  if (!token) return { payload, searches: 0 }
+  let overview: JsonValue = null
+  let searches = 0
+  try {
+    const res = await fetch(
+      {
+        engine: "google_ai_overview",
+        page_token: token,
+        json_restrictor: AI_OVERVIEW_RESTRICTORS[output],
+      },
+      output
+    )
+    searches = 1
+    overview = res.payload
+  } catch (err) {
+    devWarn("[followDeferredOverview] dropped the AI Overview:", err)
+  }
+  if (typeof payload === "string") {
+    // SerpApi writes an overview's text under "### Text Blocks".
+    const md =
+      typeof overview === "string" && /^### Text Blocks$/m.test(overview)
+        ? `${overview.trim()}\n\n`
+        : ""
+    // A function, so a "$1" in the overview stays literal text.
+    return {
+      payload: payload.replace(DEFERRED_OVERVIEW_MD, () => md).trim(),
+      searches,
+    }
+  }
+  const fetched =
+    overview && typeof overview === "object" && !Array.isArray(overview)
+      ? overview.ai_overview
+      : null
+  const hasText =
+    fetched &&
+    typeof fetched === "object" &&
+    !Array.isArray(fetched) &&
+    Array.isArray(fetched.text_blocks) &&
+    fetched.text_blocks.length > 0
+  // Overwriting the key keeps the overview where SerpApi put it.
+  const next = { ...(payload as Record<string, JsonValue>) }
+  if (hasText) next.ai_overview = fetched
+  else delete next.ai_overview
+  return { payload: next, searches }
+}
+
+/** The page token of a deferred AI Overview, or `null` for none. */
+function deferredOverviewToken(payload: JsonValue): string | null {
+  if (typeof payload === "string") {
+    return payload.match(DEFERRED_OVERVIEW_MD)?.[1] ?? null
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null
+  }
+  const overview = payload.ai_overview
+  if (!overview || typeof overview !== "object" || Array.isArray(overview)) {
+    return null
+  }
+  return typeof overview.page_token === "string" ? overview.page_token : null
 }
 
 /**
@@ -2885,14 +3013,14 @@ export const runAgentTurn = async (
             // produced `response`. It changes if the Finance fallback
             // below pivots the call to google_search.
             let restrictor = restrictorFor(call.name, toolOutput)
-            // SerpApi searches this call spends: 2 with the fallback below.
-            let searches = 1
+            // SerpApi searches this call spends, with a deferred AI
+            // Overview or the fallback below.
             const execStart = performance.now()
-            let { payload: response, searchUrl } = await executeTool(
-              call.name,
-              validated,
-              toolOutput
-            )
+            let {
+              payload: response,
+              searchUrl,
+              searches,
+            } = await executeTool(call.name, validated, toolOutput)
             let execMs = performance.now() - execStart
 
             // WHY: graceful degradation for Finance. When SerpApi has
@@ -2918,7 +3046,7 @@ export const runAgentTurn = async (
                   toolOutput
                 )
                 execMs += performance.now() - fbStart
-                searches = 2
+                searches += fallback.searches
                 restrictor = restrictorFor("google_search", toolOutput)
                 searchUrl = fallback.searchUrl
                 const note = `Google Finance had no direct quote for "${query}". These are web search results instead.`

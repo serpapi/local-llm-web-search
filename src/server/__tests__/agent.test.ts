@@ -9,6 +9,7 @@ import {
   contextBackoffSequence,
   contextOverride,
   extractSources,
+  followDeferredOverview,
   followUpParams,
   hasInlineToolCall,
   historyAfterTurn,
@@ -40,13 +41,14 @@ import {
   validateToolArgs,
 } from "../agent.server"
 import {
+  AI_OVERVIEW_RESTRICTORS,
   MARKDOWN_RESTRICTORS,
   RESTRICTORS,
   RESTRICTOR_TOOLS,
 } from "../restrictors"
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions"
-import type { ToolCallInfo } from "@/lib/agent-types"
+import type { JsonValue, ToolCallInfo } from "@/lib/agent-types"
 
 // Tests cover the pure helpers around the SerpApi tool loop: history
 // sanitisation, secret redaction, inline-XML tool-call parsing, sliding-
@@ -917,6 +919,168 @@ describe("isEmptyFinanceResponse", () => {
     expect(
       isEmptyFinanceResponse({ news_results: [{ title: "Markets rally" }] })
     ).toBe(false)
+  })
+})
+
+describe("followDeferredOverview", () => {
+  // Shapes captured live on 2026-10-21 for "CEO of SerpApi": Google
+  // deferred the AI Overview, so the search carried only its page token,
+  // and the follow-up request named the CEO.
+  const overview = {
+    text_blocks: [
+      { snippet: "Julien Khaleghy is the CEO and founder of SerpApi." },
+    ],
+    references: [
+      {
+        title: "Julien Khaleghy - CEO and Founder at SerpApi | LinkedIn",
+        link: "https://www.linkedin.com/in/julienkhaleghy",
+        source: "LinkedIn",
+      },
+    ],
+  }
+
+  function fetchReturning(payload: JsonValue) {
+    const calls: Array<{ params: Record<string, unknown>; output: string }> = []
+    const fetch = (params: Record<string, unknown>, output: string) => {
+      calls.push({ params, output })
+      return Promise.resolve({ payload, searchUrl: null })
+    }
+    return { calls, fetch }
+  }
+
+  const failing = () => Promise.reject(new Error("token expired"))
+
+  it("fetches a deferred JSON overview with its token and puts it in place", async () => {
+    const { calls, fetch } = fetchReturning({ ai_overview: overview })
+    const out = await followDeferredOverview(
+      { ai_overview: { page_token: "tok" }, organic_results: [{ title: "x" }] },
+      "json",
+      fetch
+    )
+    expect(calls).toEqual([
+      {
+        params: {
+          engine: "google_ai_overview",
+          page_token: "tok",
+          json_restrictor: AI_OVERVIEW_RESTRICTORS.json,
+        },
+        output: "json",
+      },
+    ])
+    expect(out).toEqual({
+      payload: { ai_overview: overview, organic_results: [{ title: "x" }] },
+      searches: 1,
+    })
+  })
+
+  it("drops the token when the follow-up has no overview, and counts the search", async () => {
+    const { fetch } = fetchReturning({})
+    await expect(
+      followDeferredOverview(
+        { ai_overview: { page_token: "tok" }, organic_results: [] },
+        "json",
+        fetch
+      )
+    ).resolves.toEqual({ payload: { organic_results: [] }, searches: 1 })
+  })
+
+  it("drops the token when the follow-up fails, without counting it", async () => {
+    await expect(
+      followDeferredOverview(
+        { ai_overview: { page_token: "tok" }, organic_results: [] },
+        "json",
+        failing
+      )
+    ).resolves.toEqual({ payload: { organic_results: [] }, searches: 0 })
+  })
+
+  it("leaves an inline overview alone", async () => {
+    const payload = { ai_overview: overview }
+    await expect(
+      followDeferredOverview(payload, "json", failing)
+    ).resolves.toEqual({ payload, searches: 0 })
+    const md = "## Ai Overview\n\n### Text Blocks\n\n1. An answer."
+    await expect(
+      followDeferredOverview(md, "markdown", failing)
+    ).resolves.toEqual({ payload: md, searches: 0 })
+  })
+
+  it("swaps the Markdown page token for the overview", async () => {
+    const aio =
+      "## Ai Overview\n\n### Text Blocks\n\n1. Julien Khaleghy is the CEO and founder of SerpApi."
+    const { calls, fetch } = fetchReturning(aio)
+    const out = await followDeferredOverview(
+      [
+        "## Organic Results",
+        "",
+        "| x |",
+        "",
+        "## Ai Overview",
+        "",
+        "- Page Token: DDwq-_x9",
+        "",
+        "## Knowledge Graph",
+        "",
+        "- Title: SerpApi",
+      ].join("\n"),
+      "markdown",
+      fetch
+    )
+    expect(calls).toEqual([
+      {
+        params: {
+          engine: "google_ai_overview",
+          page_token: "DDwq-_x9",
+          json_restrictor: AI_OVERVIEW_RESTRICTORS.markdown,
+        },
+        output: "markdown",
+      },
+    ])
+    expect(out).toEqual({
+      payload: [
+        "## Organic Results",
+        "",
+        "| x |",
+        "",
+        aio,
+        "",
+        "## Knowledge Graph",
+        "",
+        "- Title: SerpApi",
+      ].join("\n"),
+      searches: 1,
+    })
+  })
+
+  it("removes the Markdown page token when there is no overview to show", async () => {
+    const md =
+      "## Organic Results\n\n| x |\n\n## Ai Overview\n\n- Page Token: tok"
+    await expect(
+      followDeferredOverview(md, "markdown", failing)
+    ).resolves.toEqual({ payload: "## Organic Results\n\n| x |", searches: 0 })
+    await expect(
+      followDeferredOverview(md, "markdown", fetchReturning("").fetch)
+    ).resolves.toEqual({ payload: "## Organic Results\n\n| x |", searches: 1 })
+    // An overview section with no text blocks says nothing either.
+    await expect(
+      followDeferredOverview(
+        md,
+        "markdown",
+        fetchReturning("## Ai Overview\n\n### References\n\n| x |").fetch
+      )
+    ).resolves.toEqual({ payload: "## Organic Results\n\n| x |", searches: 1 })
+  })
+
+  it("keeps dollar signs in a Markdown overview as written", async () => {
+    // `$1` and `$&` mean something to String.replace.
+    const aio =
+      "## Ai Overview\n\n### Text Blocks\n\n1. The plan costs $199 a month, or $1,990 ($& tax) a year."
+    const out = await followDeferredOverview(
+      "## Ai Overview\n\n- Page Token: tok",
+      "markdown",
+      fetchReturning(aio).fetch
+    )
+    expect(out.payload).toBe(aio)
   })
 })
 

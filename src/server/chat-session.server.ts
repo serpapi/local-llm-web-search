@@ -335,8 +335,11 @@ export function measureLastTurn(
   }
   // WHY: nothing to compare when a call ran without a restrictor, or when
   //      Finance fell back to a web search: the unrestricted Finance call
-  //      would answer a different question. Spend no searches on it.
-  if (calls.some((c) => c.restrictor === null || (c.searches ?? 1) > 1)) {
+  //      would answer a different question. Spend no searches on it. A
+  //      web search that also fetched its AI Overview still compares.
+  const fellBack = (c: ToolCallInfo) =>
+    c.name === "google_finance_search" && (c.searches ?? 1) > 1
+  if (calls.some((c) => c.restrictor === null || fellBack(c))) {
     return Promise.resolve([])
   }
   const results = Promise.all(

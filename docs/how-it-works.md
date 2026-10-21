@@ -119,6 +119,8 @@ Small models, around 4B to 9B, are good at picking a tool by name but often get 
 
 A raw SerpApi response runs from 3,000 to more than 50,000 tokens depending on the engine, and a 9B model with a 32K window can't fit the large ones. With `json_restrictor`, SerpApi only returns the fields you list, such as the top five organic results, the summary block and a few headlines.
 
+Google often leaves the AI Overview out of a web search and sends a token for it instead. When that happens, the agent fetches the overview with the token right away, which costs one more SerpApi search.
+
 ### How the key stays on the server
 
 Routes never import `agent.server.ts`. They call the server functions in `chat.functions.ts`, `bench.functions.ts` and `models.functions.ts`, which the client build replaces with network calls. The build fails if browser code imports a `.server.ts` file, and a rule in `vite.config.ts` does the same for the SerpApi, OpenAI and tiktoken packages. The query log in `measurements/benchmark_log.json` only exists in development.

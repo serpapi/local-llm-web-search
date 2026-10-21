@@ -104,6 +104,19 @@ export function payloadCalls(): Array<PayloadCall> {
 }
 
 /**
+ * The most SerpApi searches a payload measurement spends: one per tool and
+ * mode, plus one in each restricted mode where a web search fetches the AI
+ * Overview Google deferred.
+ */
+export function payloadCredits(calls: ReadonlyArray<PayloadCall>): number {
+  const restricted = PAYLOAD_OUTPUTS.filter(
+    (o) => o === "json" || o === "markdown"
+  ).length
+  const searches = calls.filter((c) => c.name === "google_search").length
+  return calls.length * PAYLOAD_OUTPUTS.length + searches * restricted
+}
+
+/**
  * The order end-to-end cells run in: question by question, every mode back
  * to back. A slow stretch on the machine then hits every mode equally
  * instead of landing on whichever mode ran during it.

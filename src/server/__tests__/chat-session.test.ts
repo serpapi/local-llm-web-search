@@ -233,12 +233,25 @@ describe("measureLastTurn", () => {
   })
 
   it("spends nothing on a turn it can't compare", async () => {
-    const s = await sessionWith([search({ restrictor: null })])
     const fetchFull = () => Promise.reject(new Error("must not run"))
+    for (const call of [
+      search({ restrictor: null }),
+      search({ name: "google_finance_search", searches: 2 }),
+    ]) {
+      const s = await sessionWith([call])
+      await expect(
+        measureLastTurn(s, s.last?.turnId ?? "", fetchFull)
+      ).resolves.toEqual([])
+      expect(s.searches.compare).toBe(0)
+    }
+  })
+
+  it("compares a search that also fetched its AI Overview", async () => {
+    const s = await sessionWith([search({ searches: 2 })])
     await expect(
-      measureLastTurn(s, s.last?.turnId ?? "", fetchFull)
-    ).resolves.toEqual([])
-    expect(s.searches.compare).toBe(0)
+      measureLastTurn(s, s.last?.turnId ?? "", () => Promise.resolve(full))
+    ).resolves.toHaveLength(1)
+    expect(s.searches).toEqual({ model: 2, compare: 1 })
   })
 
   it("refuses a turn that is no longer the latest", async () => {

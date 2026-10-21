@@ -35,6 +35,7 @@ import {
   formatTokens,
   indexPayload,
   measuredTokens,
+  payloadCredits,
   payloadTotals,
   relativeChange,
 } from "@/lib/bench"
@@ -63,7 +64,7 @@ export function PayloadTier({
   const byKey = indexPayload(rows)
   const totals = payloadTotals(rows)
   const running = state.status === "running"
-  const credits = calls.length * PAYLOAD_OUTPUTS.length
+  const credits = payloadCredits(calls)
   const measuredEverything = PAYLOAD_OUTPUTS.every(
     (m) => totals[m].count + totals[m].errors === calls.length
   )
@@ -89,8 +90,8 @@ export function PayloadTier({
             {running
               ? `Measuring ${state.current ?? ""}`
               : rows.length > 0
-                ? `Measure again (${credits} credits)`
-                : `Measure (${credits} credits)`}
+                ? `Measure again (up to ${credits} credits)`
+                : `Measure (up to ${credits} credits)`}
           </Button>
         </CardAction>
       </CardHeader>

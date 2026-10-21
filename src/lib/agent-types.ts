@@ -126,8 +126,9 @@ export type ToolCallInfo = {
   // Which search round of the turn ran this call, from 1. Calls in the same
   // round ran in parallel. Missing on turns saved before it existed.
   round?: number
-  // SerpApi searches this call made: 2 when a Finance call found no quote
-  // and fell back to a web search, else 1.
+  // SerpApi searches this call made: 1, plus 1 when a web search fetched
+  // the AI Overview Google deferred, plus the web search a Finance call
+  // falls back to when it finds no quote.
   searches?: number
 }
 
