@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  cachedMeasurement,
   evictSessions,
   measureLastTurn,
   newSession,
@@ -230,6 +231,16 @@ describe("measureLastTurn", () => {
     await measureLastTurn(s, turnId, fetchFull)
     expect(fetched).toBe(2)
     expect(s.searches).toEqual({ model: 2, compare: 2 })
+  })
+
+  it("reads a held measurement back without starting one", async () => {
+    const s = await sessionWith([search()])
+    const turnId = s.last?.turnId ?? ""
+    await expect(cachedMeasurement(s, turnId)).resolves.toEqual([])
+    expect(s.searches.compare).toBe(0)
+    await measureLastTurn(s, turnId, () => Promise.resolve(full))
+    await expect(cachedMeasurement(s, turnId)).resolves.toHaveLength(1)
+    expect(s.searches.compare).toBe(1)
   })
 
   it("spends nothing on a turn it can't compare", async () => {

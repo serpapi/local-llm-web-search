@@ -3,13 +3,13 @@ import {
   ArrowUpRight,
   BarChart3,
   Braces,
+  Check,
   CheckCircle2,
-  ChevronDown,
+  Copy,
   Eraser,
   FlaskConical,
   Loader2,
   Moon,
-  Scale,
   Send,
   Sparkles,
   Sun,
@@ -67,11 +67,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import {
-  FULL_FETCH_FAILED,
-  RestrictorDialog,
-} from "@/components/restrictor-dialog"
+import { RestrictorDialog, toolCallLabel } from "@/components/restrictor-dialog"
 import { ModelSelector } from "@/components/model-selector"
+import { ContextWindow } from "@/components/context-window"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { buildExamples } from "@/lib/examples"
 import { pickDefaultModel } from "@/lib/models"
 import { useTheme } from "@/hooks/use-theme"
@@ -83,17 +86,8 @@ import {
   PromptInputTextarea,
 } from "@/components/ui/prompt-input"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  CONTEXT_SEGMENTS,
   TOOL_OUTPUTS,
   TOOL_OUTPUT_META,
-  contextTotal,
   fitBreakdown,
   isToolOutput,
 } from "@/lib/agent-types"
@@ -160,20 +154,6 @@ const TOOL_OUTPUT_OPTIONS = TOOL_OUTPUTS.map((value) => ({
   ...TOOL_OUTPUT_META[value],
 }))
 
-// Colors assigned per context segment. Brand tones for the meaningful movers
-// (tool definitions, tool result, final response); neutrals for overhead
-// (system prompt, user message, tool call). Keeps the stacked bar readable
-// while telling the story visually: "where does the budget actually go?"
-const SEGMENT_COLORS: Record<keyof Breakdown, string> = {
-  tool_definitions: "bg-serpapi-blue",
-  system_prompt: "bg-slate-400 dark:bg-slate-500",
-  conversation_history: "bg-indigo-400 dark:bg-indigo-500",
-  user_message: "bg-slate-300 dark:bg-slate-600",
-  tool_call: "bg-amber-400",
-  tool_result: "bg-serpapi-purple",
-  final_response: "bg-serpapi-violet",
-}
-
 const NO_TOOL_CALLS: Array<ToolCallInfo> = []
 
 // What to do when LM Studio can't be reached. The model selector carries
@@ -203,10 +183,13 @@ function App() {
   const latestToolCalls = last?.toolCalls ?? NO_TOOL_CALLS
   const { fullFetch, canMeasure, measure } = useFullResponses(
     last?.turnId ?? null,
-    latestToolCalls
+    latestToolCalls,
+    session.measuredTurnId
   )
   const undoToastId = useRef<string | number | null>(null)
   const [rawFormattedOpen, setRawFormattedOpen] = useState(false)
+  // The tool call the inspect dialog opens on.
+  const [inspectIndex, setInspectIndex] = useState(0)
   const [input, setInput] = useState("")
 
   // WHY: poll the small status while a turn runs and read the whole
@@ -312,11 +295,46 @@ function App() {
     clear.mutate()
   }
 
+  // The control that opened the inspect dialog, which gets focus back.
+  const inspectOpener = useRef<HTMLElement | null>(null)
+  function inspect(index: number) {
+    // WHY: Safari doesn't focus a clicked button, which leaves <body>.
+    const focused = document.activeElement
+    inspectOpener.current =
+      focused instanceof HTMLElement && focused !== document.body
+        ? focused
+        : null
+    setInspectIndex(index)
+    setRawFormattedOpen(true)
+  }
+
   return (
     <div className="flex min-h-svh flex-col bg-muted/40 lg:h-svh lg:overflow-hidden">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
         <Header theme={theme} onToggleTheme={toggleTheme} />
         <RestrictorDialog
+          activeIndex={inspectIndex}
+          onActiveIndexChange={setInspectIndex}
+          onCloseAutoFocus={(event) => {
+            // WHY: the opener can be gone (a new turn, a closed list) and
+            //      the composer disabled, so focus goes to the first that
+            //      takes it, ending at the message list, which always does.
+            event.preventDefault()
+            const targets = [
+              inspectOpener.current,
+              document.querySelector<HTMLElement>(
+                'textarea[aria-label="Chat input"]'
+              ),
+              document.querySelector<HTMLElement>(
+                '[aria-label="Chat messages"]'
+              ),
+            ]
+            for (const target of targets) {
+              if (!target?.isConnected || target === document.body) continue
+              target.focus()
+              if (document.activeElement === target) break
+            }
+          }}
           open={rawFormattedOpen}
           onOpenChange={setRawFormattedOpen}
           toolCalls={latestToolCalls}
@@ -325,6 +343,7 @@ function App() {
           }
           fullLoading={fullFetch.status === "loading"}
           fullError={fullFetch.status === "error" ? fullFetch.message : null}
+          onMeasure={canMeasure ? measure : undefined}
         />
         <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden">
           <ChatPanel
@@ -360,12 +379,11 @@ function App() {
             toolCalls={latestToolCalls}
             searches={session.searches}
             lastTurnSearches={last?.searches ?? null}
+            model={last?.model}
+            onInspect={inspect}
             fullFetch={fullFetch}
-            onMeasureFull={canMeasure ? measure : undefined}
             onInspectRaw={
-              latestToolCalls.length > 0
-                ? () => setRawFormattedOpen(true)
-                : undefined
+              latestToolCalls.length > 0 ? () => inspect(0) : undefined
             }
           />
         </div>
@@ -430,7 +448,7 @@ function Header({
 
 // Picks which SerpApi output feeds the model: the structured JSON response
 // or SerpApi's Markdown output (https://serpapi.com/markdown-output), with
-// or without the restrictor.
+// or without the restrictor. Laid out like the Examples popover.
 function ToolOutputSelector({
   value,
   onChange,
@@ -438,37 +456,68 @@ function ToolOutputSelector({
   value: ToolOutput
   onChange: (output: ToolOutput) => void
 }) {
+  const [open, setOpen] = useState(false)
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="lg" aria-label="Tool output">
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="lg"
+          aria-label="Select tool output"
+        >
           <Braces data-icon="inline-start" />
           {TOOL_OUTPUT_META[value].label}
-          <ChevronDown
-            data-icon="inline-end"
-            className="text-muted-foreground"
-          />
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        <DropdownMenuRadioGroup
-          value={value}
-          onValueChange={(v) => {
-            if (isToolOutput(v)) onChange(v)
-          }}
-        >
-          {TOOL_OUTPUT_OPTIONS.map((o) => (
-            <DropdownMenuRadioItem
-              key={o.value}
-              value={o.value}
-              title={o.description}
-            >
-              {o.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="max-h-(--radix-popover-content-available-height) w-[340px] overflow-y-auto p-3"
+      >
+        <div className="flex flex-col gap-3">
+          <span className="px-1 text-sm font-semibold">Tool output</span>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between px-1">
+              <span className="text-[11px] font-semibold tracking-wide uppercase">
+                SerpApi response
+              </span>
+            </div>
+            <ul aria-label="Tool output" className="flex flex-col gap-1">
+              {TOOL_OUTPUT_OPTIONS.map((o) => (
+                <li key={o.value}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="block"
+                    aria-pressed={o.value === value}
+                    onClick={() => {
+                      onChange(o.value)
+                      setOpen(false)
+                    }}
+                    className="justify-start gap-2 px-2.5 py-1.5 text-left"
+                  >
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-foreground">{o.label}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {o.description}
+                      </span>
+                    </span>
+                    {o.value === value ? (
+                      <Check
+                        data-icon="inline-end"
+                        className="text-serpapi-blue"
+                      />
+                    ) : null}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -500,7 +549,7 @@ function ExamplesPopover({
         align="end"
         side="top"
         sideOffset={8}
-        className="w-[340px] p-3"
+        className="max-h-(--radix-popover-content-available-height) w-[340px] overflow-y-auto p-3"
       >
         <div className="flex flex-col gap-3">
           <span className="px-1 text-sm font-semibold">Examples</span>
@@ -510,9 +559,6 @@ function ExamplesPopover({
                 <div className="flex items-baseline justify-between px-1">
                   <span className="text-[11px] font-semibold tracking-wide uppercase">
                     {group.title}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {group.description}
                   </span>
                 </div>
                 <ul className="flex flex-col gap-1">
@@ -623,6 +669,9 @@ function ChatPanel({
         className="min-h-0 flex-1 px-4 py-4"
         aria-live="polite"
         aria-label="Chat messages"
+        // Focus lands here when the inspect dialog closes and nothing
+        // better can take it.
+        tabIndex={-1}
       >
         <ChatContainerContent className="gap-4">
           {messages.length === 0 ? (
@@ -658,6 +707,7 @@ function ChatPanel({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <ExamplesPopover onPick={setInput} disabled={disabled} />
               <ModelSelector
+                side="top"
                 availableModels={availableModels}
                 selectedModel={selectedModel}
                 onSelectModel={onSelectModel}
@@ -814,14 +864,48 @@ function ChatMessageBubble({ message }: { message: ChatMessage }) {
               <SourcesList sources={message.sources} />
             ) : null}
             {typeof message.elapsedMs === "number" ? (
-              <div className="text-right font-mono text-xs text-muted-foreground tabular-nums">
-                {(message.elapsedMs / 1000).toFixed(2)}s
+              <div className="flex items-center justify-end gap-1">
+                {message.isError ? null : <CopyButton text={message.content} />}
+                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                  {(message.elapsedMs / 1000).toFixed(2)}s
+                </span>
               </div>
             ) : null}
           </div>
         ) : null}
       </div>
     </Message>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Copy answer"
+          className="text-muted-foreground"
+          onClick={() => {
+            navigator.clipboard.writeText(text).then(
+              () => setCopied(true),
+              () => toast.error("Could not copy the answer.")
+            )
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{copied ? "Copied" : "Copy"}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -926,8 +1010,9 @@ function BreakdownPanel({
   toolCalls,
   searches,
   lastTurnSearches,
+  model,
+  onInspect,
   fullFetch,
-  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown | null
@@ -939,8 +1024,9 @@ function BreakdownPanel({
   toolCalls: Array<ToolCallInfo>
   searches: ChatSearches
   lastTurnSearches: number | null
+  model?: string
+  onInspect: (index: number) => void
   fullFetch: FullFetchState
-  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
   const searchCard =
@@ -954,6 +1040,16 @@ function BreakdownPanel({
         <CardDescription>
           What the model read and wrote on its last call.
         </CardDescription>
+        {model && breakdown !== null ? (
+          <CardAction>
+            <Badge
+              variant="outline"
+              className="max-w-40 truncate font-mono text-[10px]"
+            >
+              {model}
+            </Badge>
+          </CardAction>
+        ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {breakdown === null ? (
@@ -971,8 +1067,8 @@ function BreakdownPanel({
             conversationTokens={conversationTokens}
             toolCalls={toolCalls}
             searchCard={searchCard}
+            onInspect={onInspect}
             fullFetch={fullFetch}
-            onMeasureFull={onMeasureFull}
             onInspectRaw={onInspectRaw}
           />
         )}
@@ -1003,8 +1099,8 @@ function BreakdownBody({
   conversationTokens,
   toolCalls,
   searchCard,
+  onInspect,
   fullFetch,
-  onMeasureFull,
   onInspectRaw,
 }: {
   breakdown: Breakdown
@@ -1015,39 +1111,32 @@ function BreakdownBody({
   conversationTokens: number
   toolCalls: Array<ToolCallInfo>
   searchCard: ReactNode
+  onInspect: (index: number) => void
   fullFetch: FullFetchState
-  onMeasureFull?: () => void
   onInspectRaw?: () => void
 }) {
-  // WHY: the segments are estimates and LM Studio's count is exact, so the
-  //      segments are fitted to it: they keep their shares and add up to
-  //      the number LM Studio reported. Without usage they stay estimates.
+  // WHY: the parts are estimates and LM Studio's count is exact, so the
+  //      parts are fitted to it: they keep their shares and add up to the
+  //      number LM Studio reported. Without usage they stay estimates.
   const fit = exactUsage ? fitBreakdown(breakdown, exactUsage) : null
-  const shown = fit?.breakdown ?? breakdown
-  const total = contextTotal(shown)
-
-  // Rank segments by size so the compact list leads with the biggest movers.
-  const orderedSegments = [...CONTEXT_SEGMENTS]
-    .map((seg) => ({
-      ...seg,
-      count: shown[seg.key],
-      pct: total > 0 ? shown[seg.key] / total : 0,
-      color: SEGMENT_COLORS[seg.key],
-    }))
-    .sort((a, b) => b.count - a.count)
+  const ratio = fit?.ratio ?? 1
 
   return (
     <div className="flex flex-col gap-5">
-      <HeroTotal
-        total={total}
+      <ContextWindow
+        breakdown={fit?.breakdown ?? breakdown}
+        fitted={fit !== null}
         exactUsage={exactUsage}
         modelContext={modelContext}
+        searches={toolCalls.map((call) => ({
+          label: toolCallLabel(call),
+          tokens: Math.round(call.tokens * ratio),
+        }))}
+        onInspect={onInspect}
       />
-      <StackedBar segments={orderedSegments} total={total} />
-      <SegmentList segments={orderedSegments} fitted={fit !== null} />
       <TurnSummary
         totalUsage={totalUsage}
-        nextQuestionTokens={Math.round(conversationTokens * (fit?.ratio ?? 1))}
+        nextQuestionTokens={Math.round(conversationTokens * ratio)}
       />
       {searchCard}
       {phases ? <LatencyCard phases={phases} /> : null}
@@ -1055,87 +1144,9 @@ function BreakdownBody({
         <JsonRestrictorCard
           toolCalls={toolCalls}
           fullFetch={fullFetch}
-          onMeasure={onMeasureFull}
           onInspect={onInspectRaw}
         />
       ) : null}
-    </div>
-  )
-}
-
-function HeroTotal({
-  total,
-  exactUsage,
-  modelContext,
-}: {
-  total: number
-  exactUsage: ExactUsage | null
-  modelContext: ModelContextSnapshot | null
-}) {
-  const budget = modelContext?.loaded ?? null
-  const pctUsed = budget && budget > 0 ? (total / budget) * 100 : 0
-  const pctLabel =
-    budget && pctUsed > 0 && pctUsed < 1 ? "<1%" : `${Math.round(pctUsed)}%`
-  const maxLabel =
-    modelContext && modelContext.max !== modelContext.loaded
-      ? `model max ${modelContext.max.toLocaleString("en-US")}`
-      : null
-  const reasoning = exactUsage?.reasoningTokens ?? 0
-
-  return (
-    <div className="flex flex-col gap-2">
-      <span
-        className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
-        title="Everything the model read and wrote on the last call of this turn, as LM Studio counted it with the model's own tokenizer and chat template. The segments below share that total in proportion to estimates from a generic tokenizer."
-      >
-        Context used
-      </span>
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-3xl font-semibold tabular-nums">
-            {exactUsage ? "" : "~"}
-            {total.toLocaleString("en-US")}
-          </span>
-          {budget != null ? (
-            <span className="font-mono text-base text-muted-foreground tabular-nums">
-              / {budget.toLocaleString("en-US")}
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground">tokens</span>
-          )}
-        </div>
-        {budget != null ? (
-          <span className="font-mono text-xs text-muted-foreground tabular-nums">
-            {pctLabel}
-          </span>
-        ) : null}
-      </div>
-      {budget != null ? (
-        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="absolute inset-y-0 left-0 rounded-full serpapi-gradient transition-[width] duration-500 ease-out"
-            style={{ width: `${Math.max(0.5, pctUsed)}%` }}
-          />
-        </div>
-      ) : null}
-      <div className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground tabular-nums">
-        <span
-          title={
-            exactUsage
-              ? "LM Studio's count for the last call. The output includes the tokens the model spent reasoning."
-              : "LM Studio sent no usage for this call, so the total is estimated with the cl100k tokenizer."
-          }
-        >
-          {exactUsage
-            ? `${exactUsage.promptTokens.toLocaleString("en-US")} in · ${exactUsage.completionTokens.toLocaleString("en-US")} out${
-                reasoning > 0
-                  ? ` (${reasoning.toLocaleString("en-US")} reasoning)`
-                  : ""
-              }`
-            : "estimated"}
-        </span>
-        {maxLabel ? <span>{maxLabel}</span> : null}
-      </div>
     </div>
   )
 }
@@ -1233,80 +1244,6 @@ function SearchesCard({
   )
 }
 
-type OrderedSegment = {
-  key: keyof Breakdown
-  label: string
-  description: string
-  count: number
-  pct: number
-  color: string
-}
-
-function StackedBar({
-  segments,
-  total,
-}: {
-  segments: Array<OrderedSegment>
-  total: number
-}) {
-  if (total === 0) return null
-  return (
-    <div className="flex h-2 overflow-hidden rounded-full bg-muted">
-      {segments.map((seg) => {
-        if (seg.count === 0) return null
-        return (
-          <div
-            key={seg.key}
-            className={`${seg.color} transition-[width] duration-500 ease-out`}
-            style={{ width: `${seg.pct * 100}%` }}
-            title={`${seg.label}: ${seg.count.toLocaleString("en-US")} (${Math.round(seg.pct * 100)}%)`}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
-// "~" marks an estimate. With LM Studio's usage, the output is its exact
-// count and the input parts are estimates scaled to its exact total.
-function SegmentList({
-  segments,
-  fitted,
-}: {
-  segments: Array<OrderedSegment>
-  fitted: boolean
-}) {
-  return (
-    <ul className="flex flex-col gap-1.5">
-      {segments.map((seg) => {
-        const pct = Math.round(seg.pct * 100)
-        return (
-          <li
-            key={seg.key}
-            title={seg.description}
-            className="flex items-center gap-2.5 text-sm"
-          >
-            <span
-              aria-hidden
-              className={`${seg.color} h-2 w-2 shrink-0 rounded-full`}
-            />
-            <span className="flex-1 truncate">{seg.label}</span>
-            <span className="font-mono tabular-nums">
-              {seg.count > 0 && !(fitted && seg.key === "final_response")
-                ? "~"
-                : ""}
-              {seg.count.toLocaleString("en-US")}
-            </span>
-            <span className="w-9 text-right font-mono text-xs text-muted-foreground tabular-nums">
-              {pct > 0 ? `${pct}%` : seg.count > 0 ? "<1%" : "–"}
-            </span>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
 function LatencyCard({ phases }: { phases: Phases }) {
   // WHY: with no tool call there is no second inference. The first call
   //      IS the answer, so labelling it "Pick tool" would be wrong.
@@ -1379,18 +1316,16 @@ function LatencyCard({ phases }: { phases: Phases }) {
 // Shows what the JSON Restrictor did in one glance: the full SerpApi
 // response vs. the filtered payload the model received. The full response
 // costs one more search per tool call, so it is fetched only when the user
-// asks (`onMeasure`) and passed in via `fullFetch`. When the turn ran
+// asks, from the inspect dialog, and passed in via `fullFetch`. When the turn ran
 // without a restrictor the card just reports what the model received.
 // Both sizes are cl100k counts, the ruler /bench uses, not LM Studio's.
 function JsonRestrictorCard({
   toolCalls,
   fullFetch,
-  onMeasure,
   onInspect,
 }: {
   toolCalls: Array<ToolCallInfo>
   fullFetch: FullFetchState
-  onMeasure?: () => void
   onInspect?: () => void
 }) {
   const filteredTokens = toolCalls.reduce((sum, c) => sum + c.tokens, 0)
@@ -1439,36 +1374,6 @@ function JsonRestrictorCard({
           </span>
         </div>
       )}
-
-      {onMeasure &&
-      (fullFetch.status === "idle" || fullFetch.status === "error") ? (
-        <div className="flex flex-col gap-1.5">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onMeasure}
-            className="w-full justify-center gap-1.5"
-          >
-            <Scale data-icon="inline-start" aria-hidden />
-            Compare with the full response
-          </Button>
-          <p className="text-[11px] text-muted-foreground">
-            Runs {toolCalls.length === 1 ? "the search" : "each search"} again
-            without the restrictor: {toolCalls.length} more SerpApi{" "}
-            {toolCalls.length === 1 ? "search" : "searches"}.
-          </p>
-        </div>
-      ) : null}
-
-      {fullFetch.status === "loading" ? (
-        <TextShimmerLoader text="Measuring the full response…" size="sm" />
-      ) : null}
-
-      {fullFetch.status === "error" ? (
-        <p title={fullFetch.message} className="text-[11px] text-destructive">
-          {FULL_FETCH_FAILED}
-        </p>
-      ) : null}
 
       {onInspect ? (
         <Button

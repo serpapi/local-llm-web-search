@@ -66,6 +66,9 @@ export type ChatSearches = {
 export type ChatTurnStats = {
   // Names the turn, so the page can tell a new turn from a failed one.
   turnId: string
+  // The LM Studio model that answered. Missing on sessions from before
+  // it was recorded.
+  model?: string
   breakdown: Breakdown
   exactUsage: ExactUsage | null
   // Every completion of the turn summed, or null if one lacked usage.
@@ -92,6 +95,9 @@ export type ChatSession = {
   // User turns the model still remembers after history trimming.
   turnsInMemory: number
   searches: ChatSearches
+  // The turn whose full responses the server holds, so the page can show
+  // that comparison again without spending a search.
+  measuredTurnId: string | null
 }
 
 // What the page polls while a turn runs: small on purpose, because the full

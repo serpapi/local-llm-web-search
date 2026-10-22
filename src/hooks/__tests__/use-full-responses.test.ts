@@ -71,7 +71,7 @@ describe("useFullResponses", () => {
 
   it("fetches nothing until asked", () => {
     const { result } = renderHook(
-      () => useFullResponses("turn-950", [call("paris")]),
+      () => useFullResponses("turn-950", [call("paris")], null),
       { wrapper }
     )
     expect(result.current.canMeasure).toBe(true)
@@ -84,7 +84,7 @@ describe("useFullResponses", () => {
       searches: { model: 2, compare: 0 },
     } as ChatSession)
     const { result } = renderHook(
-      () => useFullResponses("turn-950", [call("paris"), call("rome")]),
+      () => useFullResponses("turn-950", [call("paris"), call("rome")], null),
       { wrapper }
     )
     act(() => result.current.measure())
@@ -102,9 +102,20 @@ describe("useFullResponses", () => {
     expect(measureFullResponses).toHaveBeenCalledTimes(1)
   })
 
+  it("loads a comparison the server already holds without a click", async () => {
+    const { result } = renderHook(
+      () => useFullResponses("turn-950", [call("paris")], "turn-950"),
+      { wrapper }
+    )
+    await waitFor(() => expect(result.current.fullFetch.status).toBe("done"))
+    expect(measureFullResponses).toHaveBeenCalledWith({
+      data: { turnId: "turn-950", cachedOnly: true },
+    })
+  })
+
   it("starts over for a new turn with the same tool call", async () => {
     const { result, rerender } = renderHook(
-      ({ turnId }) => useFullResponses(turnId, [call("paris")]),
+      ({ turnId }) => useFullResponses(turnId, [call("paris")], null),
       { initialProps: { turnId: "turn-700" }, wrapper }
     )
     act(() => result.current.measure())
@@ -114,13 +125,20 @@ describe("useFullResponses", () => {
   })
 
   it("does nothing without a turn or a restrictor", () => {
-    const noTurn = renderHook(() => useFullResponses(null, [call("paris")]), {
-      wrapper,
-    })
+    const noTurn = renderHook(
+      () => useFullResponses(null, [call("paris")], null),
+      {
+        wrapper,
+      }
+    )
     act(() => noTurn.result.current.measure())
     const unrestricted = renderHook(
       () =>
-        useFullResponses("turn-950", [{ ...call("paris"), restrictor: null }]),
+        useFullResponses(
+          "turn-950",
+          [{ ...call("paris"), restrictor: null }],
+          null
+        ),
       { wrapper }
     )
     act(() => unrestricted.result.current.measure())
@@ -130,7 +148,7 @@ describe("useFullResponses", () => {
   it("keeps the error message when the fetch fails", async () => {
     measureFullResponses.mockRejectedValue(new Error("Invalid API key."))
     const { result } = renderHook(
-      () => useFullResponses("turn-950", [call("paris")]),
+      () => useFullResponses("turn-950", [call("paris")], null),
       { wrapper }
     )
     act(() => result.current.measure())

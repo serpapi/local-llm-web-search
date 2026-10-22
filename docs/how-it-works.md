@@ -76,7 +76,7 @@ The conversation lives on the server, not in the browser tab. A turn runs in the
 
 ## Token numbers
 
-"Context used" in the sidebar is LM Studio's own count for the last call of the turn, meaning the prompt the model read and the output it wrote. Every chat completion returns it in `usage`, with the reasoning share in `completion_tokens_details.reasoning_tokens`. The output count includes that reasoning, so it can be much bigger than the visible answer.
+The total in the sidebar's token breakdown is LM Studio's own count for the last call of the turn, meaning the prompt the model read and the output it wrote. Every chat completion returns it in `usage`, with the reasoning share in `completion_tokens_details.reasoning_tokens`. The output count includes that reasoning, so it can be much bigger than the visible answer.
 
 LM Studio only reports totals. The parts under the total (tool definitions, system prompt, history, tool calls, search results) are counted with tiktoken's `cl100k_base` and scaled so they add up to LM Studio's number. The sidebar marks them with "~" because they're estimates.
 
@@ -92,9 +92,9 @@ A few more things about the numbers:
 
 ### Full response size
 
-The model only ever reads the restricted response. The sidebar can also show how big the full response would have been, but that usually costs one more SerpApi search per tool call. SerpApi only serves a search from its cache when every parameter matches a search from the last hour, and the comparison leaves out `json_restrictor`.
+The model only ever reads the restricted response. The inspect dialog can also show how big the full response would have been, but that usually costs one more SerpApi search per tool call. SerpApi only serves a search from its cache when every parameter matches a search from the last hour, and the comparison leaves out `json_restrictor`.
 
-So the app only runs it when you click "Compare with the full response", at most once per answer. The sidebar counts these under "Full-response checks", next to the searches the model ran, and leaves the full size out of "Context used", because the model never reads it.
+So the app only runs it when you click "Compare with the full response" in that dialog, at most once per answer. The sidebar counts these under "Full-response checks", next to the searches the model ran, and leaves the full size out of the token breakdown's total, because the model never reads it.
 
 ## Benchmark page
 

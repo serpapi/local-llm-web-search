@@ -15,6 +15,7 @@ import { CommandMenu } from "@/components/command-menu"
 import { NotFound } from "@/components/route-states"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { THEME_STORAGE_KEY } from "@/hooks/use-theme"
 
 // WHY: the theme lives in localStorage, which the server can't read. This
@@ -91,9 +92,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body>
         <ScriptOnce children={THEME_BOOT_SCRIPT} />
         <ThemeProvider>
-          {children}
-          <CommandMenu />
-          <Toaster />
+          <TooltipProvider>
+            {children}
+            <CommandMenu />
+            <Toaster />
+          </TooltipProvider>
         </ThemeProvider>
         <TanStackDevtools
           config={{ position: "bottom-right" }}

@@ -8,6 +8,7 @@ import { createServerFn } from "@tanstack/react-start"
 import { z } from "zod"
 
 import {
+  cachedMeasurement,
   currentSession,
   measureLastTurn,
   replaceSession,
@@ -59,10 +60,16 @@ export const restoreChatSession = createServerFn({ method: "POST" })
 /**
  * The last turn's full SerpApi responses, for the restrictor card's
  * before/after. One search per tool call, once per turn; returns the
- * chat's updated search count with them.
+ * chat's updated search count with them. With `cachedOnly`, it returns
+ * only what the server already holds and spends nothing.
  */
 export const measureFullResponses = createServerFn({ method: "POST" })
-  .validator(z.object({ turnId: z.string().min(1).max(100) }))
+  .validator(
+    z.object({
+      turnId: z.string().min(1).max(100),
+      cachedOnly: z.boolean().optional(),
+    })
+  )
   .handler(
     async ({
       data,
@@ -71,7 +78,9 @@ export const measureFullResponses = createServerFn({ method: "POST" })
       searches: ChatSearches
     }> => {
       const s = currentSession()
-      const results = await measureLastTurn(s, data.turnId)
+      const results = await (data.cachedOnly
+        ? cachedMeasurement(s, data.turnId)
+        : measureLastTurn(s, data.turnId))
       return { results, searches: { ...s.searches } }
     }
   )

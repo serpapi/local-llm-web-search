@@ -85,8 +85,8 @@ describe("ModelSelector with several models", () => {
       />
     )
     const trigger = screen.getByRole("button", { name: /select models/i })
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
-    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /gemma/ }))
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole("button", { name: /gemma/ }))
     expect(onSelectModels).toHaveBeenLastCalledWith([
       "qwen/qwen3.8-27b",
       "google/gemma-4-12b-qat",
@@ -101,7 +101,7 @@ describe("ModelSelector with several models", () => {
         modelsError={null}
       />
     )
-    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /qwen/ }))
+    fireEvent.click(screen.getByRole("button", { name: /qwen/ }))
     expect(onSelectModels).not.toHaveBeenCalled()
   })
 })
@@ -110,7 +110,13 @@ describe("RestrictorDialog", () => {
   it("has a description, so Radix does not warn", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     render(
-      <RestrictorDialog open onOpenChange={() => {}} toolCalls={[searchCall]} />
+      <RestrictorDialog
+        open
+        onOpenChange={() => {}}
+        toolCalls={[searchCall]}
+        activeIndex={0}
+        onActiveIndexChange={() => {}}
+      />
     )
     const describedBy = screen
       .getByRole("dialog")
@@ -126,14 +132,37 @@ describe("RestrictorDialog", () => {
     render(
       <RestrictorDialog
         open
+        activeIndex={0}
+        onActiveIndexChange={() => {}}
         onOpenChange={() => {}}
         toolCalls={[searchCall]}
         fullError="Invalid API key."
+        onMeasure={() => {}}
       />
     )
     const message = screen.getByText(/couldn.t fetch the full response/i)
-    expect(message.textContent).toMatch(/ask again/i)
+    expect(message.textContent).toMatch(/try again/i)
     expect(message.getAttribute("title")).toBe("Invalid API key.")
-    expect(screen.queryByText(/wasn.t measured/i)).toBeNull()
+    expect(
+      screen.getByRole("button", { name: /compare with the full response/i })
+    ).toBeTruthy()
+  })
+
+  it("runs the comparison from the dialog", () => {
+    const onMeasure = vi.fn()
+    render(
+      <RestrictorDialog
+        open
+        activeIndex={0}
+        onActiveIndexChange={() => {}}
+        onOpenChange={() => {}}
+        toolCalls={[searchCall]}
+        onMeasure={onMeasure}
+      />
+    )
+    fireEvent.click(
+      screen.getByRole("button", { name: /compare with the full response/i })
+    )
+    expect(onMeasure).toHaveBeenCalledTimes(1)
   })
 })

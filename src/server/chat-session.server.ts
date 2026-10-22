@@ -179,6 +179,7 @@ export function snapshot(
     last: s.last,
     turnsInMemory: s.conversation.filter((m) => m.role === "user").length,
     searches: { ...s.searches },
+    measuredTurnId: s.measured?.turnId ?? null,
   }
 }
 
@@ -271,6 +272,7 @@ export async function runTurn(
       s.droppedTurns += result.trimmedTurns
       s.last = {
         turnId: progressId,
+        model: input.model,
         breakdown: result.breakdown,
         exactUsage: result.exactUsage,
         totalUsage: result.totalUsage,
@@ -323,6 +325,20 @@ export function sendMessage(input: ChatTurnInput): ChatSession {
  * (another tab, a remount) gets the same results instead of searching
  * again. Exported with an injectable fetch for tests.
  */
+/**
+ * The last turn's full responses if the server already holds them or is
+ * fetching them, otherwise none. Never starts a search: the page calls
+ * this on load, without a click.
+ */
+export function cachedMeasurement(
+  s: SessionState,
+  turnId: string
+): Promise<Array<FullResponseResult>> {
+  return s.measured?.turnId === turnId
+    ? s.measured.results
+    : Promise.resolve([])
+}
+
 export function measureLastTurn(
   s: SessionState,
   turnId: string,

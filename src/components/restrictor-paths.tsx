@@ -90,15 +90,19 @@ const STATUS_LABEL: Record<PathStatus, string> = {
 /**
  * A `json_restrictor` string as one card per top-level path, each showing
  * the fields it keeps. With `response`, each card also says whether that
- * path came back for this search, and absent paths are dimmed.
+ * path came back for this search, and absent paths are dimmed. The `grid`
+ * layout lays the returned paths out in columns and lists the rest on one
+ * line, for a full-width strip.
  */
 export function RestrictorPaths({
   restrictor,
   response,
+  layout = "column",
 }: {
   restrictor: string
   // What the model received. Omit when it wasn't recorded (saved runs).
   response?: JsonValue
+  layout?: "column" | "grid"
 }) {
   // WHY: returned paths first, so what reached the model reads at a glance;
   //      the rest keep the restrictor's order below them.
@@ -111,14 +115,49 @@ export function RestrictorPaths({
   }
   const returned = rows.filter((r) => r.status === "returned").length
   const answerPaths = rows.filter((r) => r.status !== "sources").length
+  const summary =
+    response !== undefined ? (
+      <p className="text-xs text-muted-foreground tabular-nums">
+        {returned} of {answerPaths} paths returned
+      </p>
+    ) : null
+
+  if (layout === "grid") {
+    const others = rows.filter((r) => r.status !== "returned")
+    return (
+      <div className="flex flex-col gap-2">
+        {summary}
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {rows
+            .filter((r) => r.status === "returned")
+            .map(({ path, status }, i) => (
+              <div
+                key={i}
+                className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-background p-2.5"
+              >
+                <RestrictorNode path={path} status={status} />
+              </div>
+            ))}
+        </div>
+        {others.length > 0 ? (
+          <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            {others.map(({ path, status }, i) => (
+              <li key={i} className="flex items-baseline gap-1.5">
+                <code className="font-mono text-[10px]">
+                  {parseRestrictorPath(path).head}
+                </code>
+                <span>{status ? STATUS_LABEL[status] : null}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      {response !== undefined ? (
-        <p className="text-xs text-muted-foreground tabular-nums">
-          {returned} of {answerPaths} paths returned
-        </p>
-      ) : null}
+      {summary}
       {rows.map(({ path, status }, i) => {
         return (
           <div
@@ -133,15 +172,6 @@ export function RestrictorPaths({
         )
       })}
     </div>
-  )
-}
-
-/** The literal `json_restrictor` parameter, for copying or reading in full. */
-export function RestrictorParameter({ restrictor }: { restrictor: string }) {
-  return (
-    <code className="block rounded-lg border border-border/60 bg-muted/40 p-2.5 font-mono text-[10px] leading-relaxed break-all text-muted-foreground select-all">
-      json_restrictor={restrictor}
-    </code>
   )
 }
 

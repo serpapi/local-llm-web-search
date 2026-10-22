@@ -1,19 +1,21 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Cpu } from "lucide-react"
+import { useState } from "react"
+import { AlertTriangle, Check, Cpu } from "lucide-react"
 
 import type { ModelInfo } from "@/lib/agent-types"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 
 type ModelSelectorProps = {
   availableModels: Array<ModelInfo>
   modelsError: string | null
+  // Which way the list opens. The chat composer sits at the bottom of the
+  // page, so it opens upward like the Examples popover.
+  side?: "top" | "bottom"
 } & (
   | {
       multiple?: false
@@ -29,14 +31,20 @@ type ModelSelectorProps = {
     }
 )
 
+// The list splits models by whether they can call SerpApi at all.
+const MODEL_GROUPS = [
+  { title: "Tool use", toolUseTrained: true },
+  { title: "No tool use", toolUseTrained: false },
+]
+
 /**
- * Picks the LM Studio model. The trigger is the same outline Button the
- * Examples popover uses, so the two read as one row of controls; the list
- * is a radio menu (or a checkbox menu with `multiple`) with the model's
- * size and architecture as a muted suffix.
+ * Picks the LM Studio model. Laid out like the Examples popover: the same
+ * outline trigger, a title, and the models grouped by tool use, each with
+ * its size as a badge.
  */
 export function ModelSelector(props: ModelSelectorProps) {
-  const { availableModels, modelsError } = props
+  const { availableModels, modelsError, side = "bottom" } = props
+  const [open, setOpen] = useState(false)
   if (modelsError !== null) {
     // WHY: a disabled Button takes no pointer events, so the wrapper holds
     //      the error text for hover. The composer's placeholder says what
@@ -68,10 +76,23 @@ export function ModelSelector(props: ModelSelectorProps) {
       : []
   const ids = picked.map((m) => m.id)
 
+  function pick(id: string) {
+    if (!props.multiple) {
+      props.onSelectModel(id)
+      setOpen(false)
+      return
+    }
+    // Stays open, so several models can be ticked in a row. A run needs a
+    // model, so the last one stays picked.
+    if (!ids.includes(id)) props.onSelectModels([...ids, id])
+    else if (ids.length > 1) props.onSelectModels(ids.filter((i) => i !== id))
+  }
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <Button
+          type="button"
           variant="outline"
           size="lg"
           aria-label={props.multiple ? "Select models" : "Select model"}
@@ -85,73 +106,68 @@ export function ModelSelector(props: ModelSelectorProps) {
               +{picked.length - 1}
             </span>
           ) : null}
-          <ChevronDown
-            data-icon="inline-end"
-            className="text-muted-foreground"
-          />
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
+      </PopoverTrigger>
+      <PopoverContent
         align="start"
-        className="w-max max-w-[min(32rem,90vw)]"
+        side={side}
+        sideOffset={8}
+        className="max-h-(--radix-popover-content-available-height) w-[340px] overflow-y-auto p-3"
       >
-        {props.multiple ? (
-          availableModels.map((m) => (
-            <DropdownMenuCheckboxItem
-              key={m.id}
-              checked={ids.includes(m.id)}
-              // Stay open, so several models can be ticked in a row.
-              onSelect={(e) => e.preventDefault()}
-              onCheckedChange={(checked) => {
-                if (checked) props.onSelectModels([...ids, m.id])
-                // A run needs a model, so the last one stays picked.
-                else if (ids.length > 1)
-                  props.onSelectModels(ids.filter((id) => id !== m.id))
-              }}
-            >
-              <ModelRow model={m} />
-            </DropdownMenuCheckboxItem>
-          ))
-        ) : (
-          <DropdownMenuRadioGroup
-            value={props.selectedModel?.id}
-            onValueChange={props.onSelectModel}
-          >
-            {availableModels.map((m) => (
-              <DropdownMenuRadioItem key={m.id} value={m.id}>
-                <ModelRow model={m} />
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-function ModelRow({ model }: { model: ModelInfo }) {
-  const meta: Array<string> = []
-  if (model.params) meta.push(model.params)
-  if (model.arch) meta.push(model.arch)
-  return (
-    <>
-      <span>{model.id}</span>
-      {meta.length > 0 ? (
-        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          {meta.join(" · ")}
-        </span>
-      ) : null}
-      {model.toolUseTrained ? (
-        <CheckCircle2
-          aria-label="Trained for tool use"
-          className="text-emerald-600 dark:text-emerald-400"
-        />
-      ) : (
-        <AlertTriangle
-          aria-label="Not flagged for tool use"
-          className="text-amber-600 dark:text-amber-400"
-        />
-      )}
-    </>
+        <div className="flex flex-col gap-3">
+          <span className="px-1 text-sm font-semibold">
+            {props.multiple ? "Models" : "Model"}
+          </span>
+          {MODEL_GROUPS.map((group) => {
+            const models = availableModels.filter(
+              (m) => m.toolUseTrained === group.toolUseTrained
+            )
+            if (models.length === 0) return null
+            return (
+              <div key={group.title} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between px-1">
+                  <span className="text-[11px] font-semibold tracking-wide uppercase">
+                    {group.title}
+                  </span>
+                </div>
+                <ul aria-label={group.title} className="flex flex-col gap-1">
+                  {models.map((m) => {
+                    const selected = ids.includes(m.id)
+                    return (
+                      <li key={m.id}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-pressed={selected}
+                          onClick={() => pick(m.id)}
+                          className="w-full justify-start gap-2 text-left"
+                        >
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 font-mono text-[10px]"
+                          >
+                            {m.params ?? "–"}
+                          </Badge>
+                          <span className="flex-1 truncate text-foreground">
+                            {m.id}
+                          </span>
+                          {selected ? (
+                            <Check
+                              data-icon="inline-end"
+                              className="text-serpapi-blue"
+                            />
+                          ) : null}
+                        </Button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
